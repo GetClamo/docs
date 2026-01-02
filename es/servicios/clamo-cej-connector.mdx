@@ -14,23 +14,23 @@ Servicio Python que automatiza la extracción de datos de expedientes judiciales
 | **Repositorio** | `GetClamo/clamo-cej-connector` |
 | **Lenguaje** | Python 3.11 |
 | **Orquestación** | Temporal |
-| **Browser** | Steel + Playwright |
+| **Navegador** | Steel + Playwright |
 | **LLM** | Anthropic Claude |
 
 ## Arquitectura
 
 ```mermaid
 flowchart TB
-    subgraph Scheduler [Scheduling]
+    subgraph Scheduler [Programación]
         Cron[Cron Jobs]
         Temporal[Temporal Server]
     end
     
     subgraph Connector [clamo-cej-connector]
         Worker[Temporal Worker]
-        Browser[Browser Controller]
-        Parser[HTML Parser]
-        Normalizer[LLM Normalizer]
+        Browser[Controlador de Navegador]
+        Parser[Analizador HTML]
+        Normalizer[Normalizador LLM]
     end
     
     subgraph External [Externos]
@@ -146,9 +146,9 @@ class DiscoverNewCasesWorkflow:
         return DiscoverResult(new_cases_count=len(new_cases))
 ```
 
-## Activities
+## Actividades
 
-### Browser Control
+### Control de Navegador
 
 ```python
 @activity.defn
@@ -205,7 +205,7 @@ async def search_by_ruc(
         return [SearchResult(**r) for r in results]
 ```
 
-### LLM Normalization
+### Normalización LLM
 
 ```python
 @activity.defn
@@ -308,9 +308,9 @@ services:
       - "9092:9092"
 ```
 
-## Scheduling
+## Programación
 
-### Configuración de Jobs
+### Configuración de Trabajos
 
 ```python
 # scheduler.py
@@ -347,10 +347,10 @@ async def setup_schedules():
 |-------|-------|--------|
 | `CaptchaDetected` | El CEJ muestra captcha | Reintentar con nuevo proxy |
 | `SessionExpired` | Sesión de browser expiró | Crear nueva sesión |
-| `RateLimited` | Demasiadas requests | Backoff exponencial |
+| `RateLimited` | Demasiadas solicitudes | Backoff exponencial |
 | `ParseError` | HTML inesperado | Log para revisión manual |
 
-### Retry Policy
+### Política de Reintentos
 
 ```python
 retry_policy = RetryPolicy(

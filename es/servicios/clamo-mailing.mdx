@@ -29,10 +29,10 @@ flowchart LR
     end
     
     subgraph Mailing [clamo-mailing]
-        Routes[Routes]
-        Templates[React Email Templates]
-        Renderer[Email Renderer]
-        Sender[SendGrid Sender]
+        Routes[Rutas]
+        Templates[Plantillas React Email]
+        Renderer[Renderizador de Email]
+        Sender[Enviador SendGrid]
     end
     
     subgraph Delivery [Entrega]
@@ -50,7 +50,7 @@ flowchart LR
     SendGrid --> Users
 ```
 
-## Templates
+## Plantillas
 
 ### Estructura
 
@@ -279,7 +279,7 @@ export function NewMovementEmail({
 | POST | `/send/movement` | Notificar movimiento |
 | POST | `/send/risk-alert` | Alerta de riesgo |
 | POST | `/send/weekly-report` | Reporte semanal |
-| GET | `/preview/:template` | Preview de template |
+| GET | `/preview/:template` | Vista previa de plantilla |
 
 ### Ejemplo: Enviar Invitación
 
@@ -326,7 +326,7 @@ app.post('/invitation', async (c) => {
 export default app;
 ```
 
-## SendGrid Integration
+## Integración SendGrid
 
 ```typescript
 // src/lib/sendgrid.ts
@@ -380,7 +380,7 @@ export async function sendBulkEmail(
 }
 ```
 
-## Preview de Templates
+## Vista Previa de Plantillas
 
 ```typescript
 // src/routes/preview.ts
@@ -464,12 +464,12 @@ pnpm email:preview
 pnpm build
 ```
 
-### Email Preview Server
+### Servidor de Vista Previa de Email
 
 ```bash
-# Iniciar servidor de preview
+# Iniciar servidor de vista previa
 npx email dev
 
-# Abre http://localhost:3000 para ver templates
+# Abre http://localhost:3000 para ver plantillas
 ```
 

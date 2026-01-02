@@ -101,7 +101,7 @@ La configuración se guarda en `clamo.dev.config.json`.
 | `javi` | Agente IA de casos | Local |
 | `clamy` | Agente IA de analytics | Local |
 | `clamo-cej-connector` | Conector CEJ | Docker |
-| `clamo-cej-discovery` | Discovery workers | Docker |
+| `clamo-cej-discovery` | Workers de descubrimiento | Docker |
 | `clamo-ingest-go` | Worker de ingesta | Docker |
 
 ## Comandos Principales
@@ -201,21 +201,21 @@ pnpm build
 clamo commons use-remote
 ```
 
-## Hot Reload
+## Recarga en Caliente
 
-Todos los servicios tienen hot reload habilitado:
+Todos los servicios tienen recarga en caliente habilitada:
 
-| Servicio | Hot Reload |
+| Servicio | Recarga en Caliente |
 |----------|------------|
 | clamo-web (Next.js) | Automático |
 | clamo-cases | Via `pnpm dev` |
 | clamo-tenant | Via `pnpm dev` |
 | clamo-analytics (FastAPI) | Via `uvicorn --reload` |
 | javi / clamy (LangGraph) | Via `langgraph dev` |
-| clamo-cej-connector (Docker) | Via volume mounting |
+| clamo-cej-connector (Docker) | Vía montaje de volúmenes |
 
 <Warning>
-Cambios en `clamo-commons` requieren rebuild manual:
+Cambios en `clamo-commons` requieren reconstrucción manual:
 ```bash
 cd clamo-commons && pnpm build
 ```
@@ -233,9 +233,9 @@ clamo dev restart --rebuild
 ```
 
 **NO necesitas rebuild para:**
-- Cambios en código Python (hot reload)
+- Cambios en código Python (recarga en caliente)
 - Cambios en `.env`
-- Cambios en runtime
+- Cambios en tiempo de ejecución
 
 ## Variables de Entorno
 

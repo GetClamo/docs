@@ -15,7 +15,7 @@ Estos son los servicios fundamentales para el funcionamiento de la plataforma.
   <Card
     title="clamo-tenant"
     icon="building"
-    href="/servicios/clamo-tenant"
+    href="/es/servicios/clamo-tenant"
   >
     **Gestión de Tenants**
     
@@ -28,7 +28,7 @@ Estos son los servicios fundamentales para el funcionamiento de la plataforma.
   <Card
     title="clamo-cases"
     icon="briefcase"
-    href="/servicios/clamo-cases"
+    href="/es/servicios/clamo-cases"
   >
     **Gestión de Casos**
     
@@ -41,7 +41,7 @@ Estos son los servicios fundamentales para el funcionamiento de la plataforma.
   <Card
     title="clamo-database"
     icon="database"
-    href="/servicios/clamo-database"
+    href="/es/servicios/clamo-database"
   >
     **Esquemas de Base de Datos**
     
@@ -60,7 +60,7 @@ Servicios responsables de la ingesta y procesamiento de datos del CEJ.
   <Card
     title="clamo-cej-connector"
     icon="spider"
-    href="/servicios/clamo-cej-connector"
+    href="/es/servicios/clamo-cej-connector"
   >
     **Conector CEJ**
     
@@ -71,9 +71,22 @@ Servicios responsables de la ingesta y procesamiento de datos del CEJ.
   </Card>
   
   <Card
+    title="clamo-cej-discovery"
+    icon="magnifying-glass"
+    href="/es/servicios/clamo-cej-discovery"
+  >
+    **Descubrimiento CEJ**
+    
+    Servicio de descubrimiento de nuevos casos por RUC. Genera reportes CSV almacenados en MinIO/S3.
+    
+    - Python / Temporal
+    - Steel + Playwright
+  </Card>
+  
+  <Card
     title="clamo-ingest-go"
     icon="bolt"
-    href="/servicios/clamo-ingest-go"
+    href="/es/servicios/clamo-ingest-go"
   >
     **Worker de Ingesta**
     
@@ -86,7 +99,7 @@ Servicios responsables de la ingesta y procesamiento de datos del CEJ.
   <Card
     title="clamo-sync"
     icon="arrows-rotate"
-    href="/servicios/clamo-sync"
+    href="/es/servicios/clamo-sync"
   >
     **Sincronización Analytics**
     
@@ -105,7 +118,7 @@ Servicios complementarios para funcionalidades específicas.
   <Card
     title="clamo-mailing"
     icon="envelope"
-    href="/servicios/clamo-mailing"
+    href="/es/servicios/clamo-mailing"
   >
     **Servicio de Email**
     
@@ -118,7 +131,7 @@ Servicios complementarios para funcionalidades específicas.
   <Card
     title="clamo-dashboards"
     icon="chart-line"
-    href="/servicios/clamo-dashboards"
+    href="/es/servicios/clamo-dashboards"
   >
     **API de Dashboards**
     
@@ -131,7 +144,7 @@ Servicios complementarios para funcionalidades específicas.
   <Card
     title="ask-clamo"
     icon="robot"
-    href="/servicios/ask-clamo"
+    href="/es/servicios/ask-clamo"
   >
     **Asistentes IA**
     
@@ -149,7 +162,8 @@ Servicios complementarios para funcionalidades específicas.
 | clamo-tenant | TypeScript | Hono | Neon (Prisma) | - |
 | clamo-cases | TypeScript | Hono | Neon (Prisma) | Ably |
 | clamo-database | TypeScript | Prisma | Neon | - |
-| clamo-cej-connector | Python | FastAPI | PostgreSQL | Kafka |
+| clamo-cej-connector | Python | Temporal | PostgreSQL | Kafka |
+| clamo-cej-discovery | Python | Temporal | PostgreSQL | - |
 | clamo-ingest-go | Go | - | Neon | Kafka |
 | clamo-sync | Rust | - | Neon | - |
 | clamo-mailing | TypeScript | Hono | PostgreSQL | - |
@@ -184,11 +198,13 @@ flowchart LR
     
     subgraph Pipeline
         CEJ[clamo-cej-connector]
+        Discovery[clamo-cej-discovery]
         Ingest[clamo-ingest-go]
     end
     
     subgraph Storage
         DB[(clamo-database)]
+        S3[(MinIO/S3)]
     end
     
     Web --> Tenant
@@ -196,6 +212,7 @@ flowchart LR
     Tenant --> DB
     Cases --> DB
     CEJ --> Ingest
+    Discovery --> S3
     Ingest --> DB
 ```
 

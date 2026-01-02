@@ -26,10 +26,10 @@ flowchart TB
     end
     
     subgraph API [clamo-dashboards]
-        Routes[Routes]
-        DashboardService[Dashboard Service]
-        WidgetService[Widget Service]
-        DataFetcher[Data Fetcher]
+        Routes[Rutas]
+        DashboardService[Servicio de Dashboard]
+        WidgetService[Servicio de Widget]
+        DataFetcher[Obtención de Datos]
     end
     
     subgraph Data [Datos]
@@ -186,7 +186,7 @@ async fn main() {
 }
 ```
 
-### Handlers
+### Manejadores
 
 ```rust
 use axum::{
@@ -233,7 +233,7 @@ async fn get_widget_data(
 }
 ```
 
-### Tinybird Client
+### Cliente Tinybird
 
 ```rust
 pub struct TinybirdClient {

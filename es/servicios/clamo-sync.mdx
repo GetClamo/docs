@@ -27,10 +27,10 @@ flowchart LR
     end
     
     subgraph Sync [clamo-sync]
-        Scheduler[Scheduler]
-        ChangeDetector[Change Detector]
-        Transformer[Transformer]
-        TinybirdWriter[Tinybird Writer]
+        Scheduler[Programador]
+        ChangeDetector[Detector de Cambios]
+        Transformer[Transformador]
+        TinybirdWriter[Escritor Tinybird]
     end
     
     subgraph Destination [Destino]
@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Syncer
+### Sincronizador
 
 ```rust
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -166,7 +166,7 @@ impl Syncer {
 }
 ```
 
-### Change Detection
+### Detección de Cambios
 
 ```rust
 impl Syncer {
@@ -241,7 +241,7 @@ impl Syncer {
 }
 ```
 
-### Tinybird Client
+### Cliente Tinybird
 
 ```rust
 pub struct TinybirdClient {

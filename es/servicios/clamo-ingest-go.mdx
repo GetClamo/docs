@@ -25,10 +25,10 @@ flowchart LR
     end
     
     subgraph Worker [clamo-ingest-go]
-        Consumer[Consumer Group]
-        Validator[Validator]
-        Router[Tenant Router]
-        BatchWriter[Batch Writer]
+        Consumer[Grupo de Consumidores]
+        Validator[Validador]
+        Router[Enrutador de Tenant]
+        BatchWriter[Escritor por Lotes]
     end
     
     subgraph Output [Salida]
@@ -48,7 +48,7 @@ flowchart LR
 
 ## Procesamiento de Eventos
 
-### Consumer
+### Consumidor
 
 ```go
 package main
@@ -128,7 +128,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 ```
 
-### Batch Insert
+### Inserción por Lotes
 
 ```go
 func (w *Worker) flush(events []CaseReadyEvent) error {
@@ -193,7 +193,7 @@ func (w *Worker) insertCases(ctx context.Context, companyID string, cases []Case
 }
 ```
 
-### Upsert Logic
+### Lógica de Upsert
 
 ```go
 func (w *Worker) upsertCase(ctx context.Context, conn *pgxpool.Conn, c Case) error {
@@ -358,7 +358,7 @@ var (
 )
 ```
 
-## Health Check
+## Verificación de Estado
 
 ```go
 func (w *Worker) HealthHandler(c *gin.Context) {

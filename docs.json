@@ -69,6 +69,7 @@
                 "group": "Pipeline de Datos",
                 "pages": [
                   "es/servicios/clamo-cej-connector",
+                  "es/servicios/clamo-cej-discovery",
                   "es/servicios/clamo-ingest-go",
                   "es/servicios/clamo-sync"
                 ]
@@ -179,6 +180,7 @@
                 "group": "Data Pipeline",
                 "pages": [
                   "en/services/clamo-cej-connector",
+                  "en/services/clamo-cej-discovery",
                   "en/services/clamo-ingest-go",
                   "en/services/clamo-sync"
                 ]

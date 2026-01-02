@@ -71,6 +71,19 @@ Services responsible for CEJ data ingestion and processing.
   </Card>
   
   <Card
+    title="clamo-cej-discovery"
+    icon="magnifying-glass"
+    href="/en/services/clamo-cej-discovery"
+  >
+    **CEJ Discovery**
+    
+    Discovery service for new cases by RUC. Generates CSV reports stored in MinIO/S3.
+    
+    - Python / Temporal
+    - Steel + Playwright
+  </Card>
+  
+  <Card
     title="clamo-ingest-go"
     icon="bolt"
     href="/en/services/clamo-ingest-go"
@@ -149,7 +162,8 @@ Complementary services for specific functionalities.
 | clamo-tenant | TypeScript | Hono | Neon (Prisma) | - |
 | clamo-cases | TypeScript | Hono | Neon (Prisma) | Ably |
 | clamo-database | TypeScript | Prisma | Neon | - |
-| clamo-cej-connector | Python | FastAPI | PostgreSQL | Kafka |
+| clamo-cej-connector | Python | Temporal | PostgreSQL | Kafka |
+| clamo-cej-discovery | Python | Temporal | PostgreSQL | - |
 | clamo-ingest-go | Go | - | Neon | Kafka |
 | clamo-sync | Rust | - | Neon | - |
 | clamo-mailing | TypeScript | Hono | PostgreSQL | - |
@@ -184,11 +198,13 @@ flowchart LR
     
     subgraph Pipeline
         CEJ[clamo-cej-connector]
+        Discovery[clamo-cej-discovery]
         Ingest[clamo-ingest-go]
     end
     
     subgraph Storage
         DB[(clamo-database)]
+        S3[(MinIO/S3)]
     end
     
     Web --> Tenant
@@ -196,6 +212,7 @@ flowchart LR
     Tenant --> DB
     Cases --> DB
     CEJ --> Ingest
+    Discovery --> S3
     Ingest --> DB
 ```
 
