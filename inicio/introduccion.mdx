@@ -1,0 +1,99 @@
+---
+title: Introducción
+description: ¿Qué es Clamo y cómo puede transformar la gestión legal de tu organización?
+---
+
+# ¿Qué es Clamo?
+
+Clamo es una plataforma SaaS especializada en la gestión de casos legales laborales para el mercado peruano. Diseñada para estudios de abogados, departamentos legales corporativos y empresas con alta carga de litigios laborales.
+
+## El Problema
+
+La gestión de casos laborales en Perú presenta desafíos únicos:
+
+- **Seguimiento manual**: Los abogados deben revisar constantemente el CEJ (Centro de Justicia Electrónico) para detectar movimientos en sus expedientes.
+- **Información dispersa**: Los datos de casos están fragmentados entre múltiples sistemas y documentos físicos.
+- **Falta de visibilidad**: Los gerentes legales no tienen métricas claras sobre el estado de su cartera de casos.
+- **Riesgo de vencimientos**: Las notificaciones y plazos procesales se pueden perder fácilmente.
+
+## La Solución
+
+Clamo automatiza y centraliza todo el ciclo de vida de un caso laboral:
+
+<Steps>
+  <Step title="Monitoreo Automatizado">
+    Scraping inteligente del CEJ que detecta nuevos movimientos, resoluciones y notificaciones en tiempo real.
+  </Step>
+  <Step title="Normalización con IA">
+    Procesamiento con LLMs para clasificar movimientos, identificar hitos procesales y extraer información clave de documentos.
+  </Step>
+  <Step title="Gestión Centralizada">
+    Dashboard unificado para visualizar todos los casos, filtrar por estado, riesgo y etapa procesal.
+  </Step>
+  <Step title="Asistentes Inteligentes">
+    Agentes de IA especializados que responden preguntas sobre casos específicos y generan análisis predictivos.
+  </Step>
+</Steps>
+
+## Beneficios Clave
+
+<CardGroup cols={2}>
+  <Card title="Ahorro de Tiempo" icon="clock">
+    Reduce hasta un 80% el tiempo dedicado a revisar el CEJ manualmente.
+  </Card>
+  <Card title="Reducción de Riesgo" icon="shield-check">
+    Alertas automáticas para plazos críticos y movimientos importantes.
+  </Card>
+  <Card title="Mejor Toma de Decisiones" icon="chart-pie">
+    Métricas y analytics que permiten identificar patrones y optimizar estrategias.
+  </Card>
+  <Card title="Escalabilidad" icon="arrow-up-right">
+    Arquitectura multi-tenant que crece con tu organización.
+  </Card>
+</CardGroup>
+
+## ¿Para Quién es Clamo?
+
+| Perfil | Caso de Uso |
+|--------|-------------|
+| **Estudios de Abogados** | Gestión de cartera de clientes con múltiples casos laborales |
+| **Departamentos Legales** | Seguimiento de litigios laborales de la empresa |
+| **Empresas con Alta Rotación** | Monitoreo de demandas de ex-empleados |
+| **Consultoras Legales** | Servicio de seguimiento para múltiples clientes |
+
+## Modelo de Datos
+
+Clamo organiza la información en una jerarquía clara:
+
+```
+Empresa (Tenant)
+├── Entidades Monitoreadas (RUCs)
+│   └── Casos (Expedientes)
+│       ├── Movimientos
+│       ├── Hitos Procesales
+│       ├── Documentos
+│       └── Snapshots de Estado
+└── Usuarios
+    ├── Administradores
+    └── Miembros
+```
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="Arquitectura"
+    icon="sitemap"
+    href="/inicio/arquitectura"
+  >
+    Conoce los componentes técnicos de la plataforma.
+  </Card>
+  <Card
+    title="Inicio Rápido"
+    icon="rocket"
+    href="/inicio/inicio-rapido"
+  >
+    Comienza a integrar Clamo en tu aplicación.
+  </Card>
+</CardGroup>
+

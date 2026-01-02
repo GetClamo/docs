@@ -1,0 +1,790 @@
+openapi: 3.1.0
+info:
+  title: Clamo Cases API
+  description: API para gestión de expedientes judiciales, movimientos e hitos procesales
+  version: 1.0.0
+  contact:
+    name: Clamo Support
+    url: https://github.com/GetClamo
+
+servers:
+  - url: https://api.clamo.dev
+    description: Producción
+  - url: https://staging-api.clamo.dev
+    description: Staging
+  - url: http://localhost:4000
+    description: Local
+
+security:
+  - bearerAuth: []
+  - sessionAuth: []
+
+tags:
+  - name: Casos
+    description: Gestión de expedientes judiciales
+  - name: Movimientos
+    description: Movimientos procesales de un caso
+  - name: Hitos
+    description: Hitos y progreso procesal
+  - name: Taxonomía
+    description: Catálogos de etapas y clasificaciones
+
+paths:
+  /v1/cases:
+    get:
+      tags:
+        - Casos
+      summary: Listar casos
+      description: Retorna lista paginada de casos con filtros opcionales
+      operationId: listCases
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortByParam'
+        - $ref: '#/components/parameters/SortOrderParam'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [EN_TRAMITE, EN_EJECUCION, ARCHIVADO, CONCLUIDO]
+        - name: riskLevel
+          in: query
+          schema:
+            type: string
+            enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        - name: stageCode
+          in: query
+          schema:
+            type: string
+        - name: district
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Búsqueda por expediente, demandante o demandado
+      responses:
+        '200':
+          description: Lista de casos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags:
+        - Casos
+      summary: Crear caso
+      description: Crea un nuevo caso manualmente
+      operationId: createCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCaseRequest'
+      responses:
+        '201':
+          description: Caso creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Case'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/cases/{id}:
+    get:
+      tags:
+        - Casos
+      summary: Obtener caso
+      description: Retorna detalle completo de un caso incluyendo movimientos recientes
+      operationId: getCase
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        '200':
+          description: Caso encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags:
+        - Casos
+      summary: Actualizar caso
+      description: Actualiza campos de un caso
+      operationId: updateCase
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCaseRequest'
+      responses:
+        '200':
+          description: Caso actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Case'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+    delete:
+      tags:
+        - Casos
+      summary: Eliminar caso
+      description: Elimina un caso y todos sus datos asociados
+      operationId: deleteCase
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        '204':
+          description: Caso eliminado
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/cases/{id}/movements:
+    get:
+      tags:
+        - Movimientos
+      summary: Listar movimientos
+      description: Retorna todos los movimientos procesales de un caso
+      operationId: listMovements
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: classification
+          in: query
+          schema:
+            type: string
+            enum: [RESOLUCION, ESCRITO, NOTIFICACION, AUDIENCIA, OTRO]
+      responses:
+        '200':
+          description: Lista de movimientos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovementList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/cases/{id}/movements/{movementId}:
+    get:
+      tags:
+        - Movimientos
+      summary: Obtener movimiento
+      description: Retorna detalle de un movimiento específico
+      operationId: getMovement
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+        - $ref: '#/components/parameters/MovementId'
+      responses:
+        '200':
+          description: Movimiento encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Movement'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/cases/{id}/milestones:
+    get:
+      tags:
+        - Hitos
+      summary: Listar hitos
+      description: Retorna hitos procesales alcanzados por el caso
+      operationId: listMilestones
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        '200':
+          description: Lista de hitos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MilestoneList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/cases/{id}/progress:
+    get:
+      tags:
+        - Hitos
+      summary: Obtener progreso
+      description: Retorna historial de etapas por las que ha pasado el caso
+      operationId: getCaseProgress
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        '200':
+          description: Progreso del caso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/taxonomy/stages:
+    get:
+      tags:
+        - Taxonomía
+      summary: Listar etapas
+      description: Retorna catálogo de etapas procesales
+      operationId: listStages
+      responses:
+        '200':
+          description: Lista de etapas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Stage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/taxonomy/substages:
+    get:
+      tags:
+        - Taxonomía
+      summary: Listar sub-etapas
+      description: Retorna catálogo de sub-etapas procesales
+      operationId: listSubstages
+      parameters:
+        - name: stageCode
+          in: query
+          schema:
+            type: string
+          description: Filtrar por etapa padre
+      responses:
+        '200':
+          description: Lista de sub-etapas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Substage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/taxonomy/milestones:
+    get:
+      tags:
+        - Taxonomía
+      summary: Listar tipos de hitos
+      description: Retorna catálogo de tipos de hitos procesales
+      operationId: listMilestoneTypes
+      responses:
+        '200':
+          description: Lista de tipos de hitos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MilestoneType'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token de acceso de WorkOS
+    sessionAuth:
+      type: apiKey
+      in: header
+      name: x-clamo-session
+      description: Token de sesión Clamo en base64
+
+  parameters:
+    CaseId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: ID del caso
+    MovementId:
+      name: movementId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: ID del movimiento
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+    SortByParam:
+      name: sortBy
+      in: query
+      schema:
+        type: string
+        default: createdAt
+    SortOrderParam:
+      name: sortOrder
+      in: query
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: desc
+
+  schemas:
+    Case:
+      type: object
+      properties:
+        id:
+          type: string
+          example: case_abc123
+        expediente:
+          type: string
+          example: "00001-2024-0-1234-JR-LA-01"
+        caseNumber:
+          type: string
+          example: "00001-2024"
+        plaintiff:
+          type: string
+          example: Juan Pérez García
+        defendant:
+          type: string
+          example: Empresa S.A.C.
+        subjectMatter:
+          type: string
+          example: Despido arbitrario
+        riskLevel:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+          example: HIGH
+        claimAmount:
+          type: number
+          nullable: true
+          example: 50000
+        district:
+          type: string
+          example: LIMA
+        court:
+          type: string
+          example: 1° Juzgado Laboral
+        currentJudge:
+          type: string
+          nullable: true
+          example: Dr. María García
+        processType:
+          type: string
+          example: ORDINARIO LABORAL
+        filingDate:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [EN_TRAMITE, EN_EJECUCION, ARCHIVADO, CONCLUIDO]
+          example: EN_TRAMITE
+        stageCode:
+          type: string
+          example: CONOCIMIENTO
+        substageCode:
+          type: string
+          example: SANEAMIENTO
+        monitoredEntityId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CaseDetail:
+      allOf:
+        - $ref: '#/components/schemas/Case'
+        - type: object
+          properties:
+            movements:
+              type: array
+              items:
+                $ref: '#/components/schemas/Movement'
+              description: Últimos 10 movimientos
+            milestones:
+              type: array
+              items:
+                $ref: '#/components/schemas/Milestone'
+            progress:
+              type: array
+              items:
+                $ref: '#/components/schemas/Progress'
+            monitoredEntity:
+              $ref: '#/components/schemas/MonitoredEntity'
+
+    CreateCaseRequest:
+      type: object
+      required:
+        - expediente
+        - plaintiff
+        - defendant
+        - subjectMatter
+        - district
+        - court
+        - processType
+        - filingDate
+        - monitoredEntityId
+      properties:
+        expediente:
+          type: string
+          pattern: ^\d{5}-\d{4}-\d-\d{4}-[A-Z]{2}-[A-Z]{2}-\d{2}$
+          example: "00001-2024-0-1234-JR-LA-01"
+        plaintiff:
+          type: string
+          minLength: 2
+        defendant:
+          type: string
+          minLength: 2
+        subjectMatter:
+          type: string
+        riskLevel:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+          default: MEDIUM
+        claimAmount:
+          type: number
+        district:
+          type: string
+        court:
+          type: string
+        currentJudge:
+          type: string
+        processType:
+          type: string
+        filingDate:
+          type: string
+          format: date
+        monitoredEntityId:
+          type: string
+
+    UpdateCaseRequest:
+      type: object
+      properties:
+        riskLevel:
+          type: string
+          enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        claimAmount:
+          type: number
+        currentJudge:
+          type: string
+        status:
+          type: string
+          enum: [EN_TRAMITE, EN_EJECUCION, ARCHIVADO, CONCLUIDO]
+
+    Movement:
+      type: object
+      properties:
+        id:
+          type: string
+          example: mov_xyz789
+        caseId:
+          type: string
+        date:
+          type: string
+          format: date-time
+        description:
+          type: string
+          example: "RESOLUCIÓN N° 15: Se tiene por contestada la demanda"
+        resolution:
+          type: string
+          nullable: true
+          example: "15"
+        actor:
+          type: string
+          nullable: true
+        classification:
+          type: string
+          enum: [RESOLUCION, ESCRITO, NOTIFICACION, AUDIENCIA, OTRO]
+          example: RESOLUCION
+        isNotification:
+          type: boolean
+          default: false
+        documentUrl:
+          type: string
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+          description: Resumen generado por IA
+        createdAt:
+          type: string
+          format: date-time
+
+    Milestone:
+      type: object
+      properties:
+        id:
+          type: string
+        caseId:
+          type: string
+        milestoneCode:
+          type: string
+          example: DEMANDA_ADMITIDA
+        achievedAt:
+          type: string
+          format: date-time
+        movementId:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+
+    Progress:
+      type: object
+      properties:
+        id:
+          type: string
+        caseId:
+          type: string
+        stageCode:
+          type: string
+          example: CONOCIMIENTO
+        substageCode:
+          type: string
+          example: CALIFICACION
+        startDate:
+          type: string
+          format: date-time
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+        durationDays:
+          type: integer
+          nullable: true
+        isCurrent:
+          type: boolean
+
+    MonitoredEntity:
+      type: object
+      properties:
+        id:
+          type: string
+        ruc:
+          type: string
+          example: "20123456789"
+        name:
+          type: string
+          example: Empresa S.A.C.
+        isActive:
+          type: boolean
+
+    Stage:
+      type: object
+      properties:
+        id:
+          type: string
+          example: CONOCIMIENTO
+        name:
+          type: string
+          example: Conocimiento
+        order:
+          type: integer
+        description:
+          type: string
+
+    Substage:
+      type: object
+      properties:
+        id:
+          type: string
+          example: CALIFICACION
+        stageId:
+          type: string
+        name:
+          type: string
+          example: Calificación
+        order:
+          type: integer
+        description:
+          type: string
+
+    MilestoneType:
+      type: object
+      properties:
+        id:
+          type: string
+          example: DEMANDA_ADMITIDA
+        name:
+          type: string
+          example: Demanda Admitida
+        stageId:
+          type: string
+          nullable: true
+        description:
+          type: string
+        isTerminal:
+          type: boolean
+          description: Indica si es un hito que termina el proceso
+
+    CaseList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Case'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    MovementList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Movement'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    MilestoneList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Milestone'
+
+    ProgressList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Progress'
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+
+  responses:
+    Unauthorized:
+      description: No autenticado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: UNAUTHORIZED
+              message: Token de autenticación requerido
+
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: NOT_FOUND
+              message: El caso solicitado no existe
+
+    ValidationError:
+      description: Error de validación
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Error de validación en los datos enviados
+
+    Conflict:
+      description: Conflicto
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: ALREADY_EXISTS
+              message: Ya existe un caso con este expediente
+
+    UnprocessableEntity:
+      description: Error de negocio
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: CASE_ARCHIVED
+              message: No se puede modificar un caso archivado
+

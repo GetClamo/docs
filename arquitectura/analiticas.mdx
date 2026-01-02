@@ -1,0 +1,457 @@
+---
+title: Analytics
+description: Arquitectura de analytics en tiempo real con Tinybird y ClickHouse
+---
+
+# Analytics
+
+Clamo utiliza Tinybird (ClickHouse gestionado) para analytics en tiempo real sobre datos de casos legales.
+
+## Arquitectura
+
+```mermaid
+flowchart TB
+    subgraph Sources [Fuentes de Datos]
+        TenantDB[(Tenant DBs)]
+        Events[Eventos de App]
+    end
+    
+    subgraph Sync [Sincronización]
+        ClamoSync[clamo-sync<br/>Rust]
+        EventCollector[Event Collector]
+    end
+    
+    subgraph Tinybird [Tinybird]
+        DS1[cases_ds]
+        DS2[movements_ds]
+        DS3[events_ds]
+        
+        Pipe1[cases_by_status]
+        Pipe2[risk_distribution]
+        Pipe3[timeline_metrics]
+        
+        API1[/cases_summary]
+        API2[/risk_report]
+        API3[/trends]
+    end
+    
+    subgraph Consumers [Consumidores]
+        Dashboard[Dashboard]
+        Clamy[Clamy Agent]
+        Exports[Exports]
+    end
+    
+    TenantDB --> ClamoSync
+    Events --> EventCollector
+    ClamoSync --> DS1
+    ClamoSync --> DS2
+    EventCollector --> DS3
+    DS1 --> Pipe1
+    DS1 --> Pipe2
+    DS2 --> Pipe3
+    Pipe1 --> API1
+    Pipe2 --> API2
+    Pipe3 --> API3
+    API1 --> Dashboard
+    API2 --> Clamy
+    API3 --> Exports
+```
+
+## Datasources
+
+### cases_ds
+
+Datos maestros de casos:
+
+```sql
+-- Esquema del datasource
+SCHEMA >
+    `company_id` String,
+    `case_id` String,
+    `expediente` String,
+    `plaintiff` String,
+    `defendant` String,
+    `subject_matter` String,
+    `risk_level` Enum8('LOW' = 1, 'MEDIUM' = 2, 'HIGH' = 3, 'CRITICAL' = 4),
+    `claim_amount` Nullable(Float64),
+    `district` String,
+    `court` String,
+    `status` Enum8('EN_TRAMITE' = 1, 'EN_EJECUCION' = 2, 'ARCHIVADO' = 3, 'CONCLUIDO' = 4),
+    `stage_code` String,
+    `substage_code` String,
+    `filing_date` Date,
+    `created_at` DateTime,
+    `updated_at` DateTime
+
+ENGINE "MergeTree"
+ENGINE_PARTITION_KEY "toYYYYMM(filing_date)"
+ENGINE_SORTING_KEY "company_id, case_id"
+```
+
+### movements_ds
+
+Movimientos procesales:
+
+```sql
+SCHEMA >
+    `company_id` String,
+    `case_id` String,
+    `movement_id` String,
+    `date` Date,
+    `description` String,
+    `classification` Enum8('RESOLUCION' = 1, 'ESCRITO' = 2, 'NOTIFICACION' = 3, 'AUDIENCIA' = 4, 'OTRO' = 5),
+    `is_notification` UInt8,
+    `created_at` DateTime
+
+ENGINE "MergeTree"
+ENGINE_PARTITION_KEY "toYYYYMM(date)"
+ENGINE_SORTING_KEY "company_id, case_id, date"
+```
+
+### events_ds
+
+Eventos de aplicación para analytics de uso:
+
+```sql
+SCHEMA >
+    `company_id` String,
+    `user_id` String,
+    `event_type` String,
+    `event_data` String,
+    `timestamp` DateTime
+
+ENGINE "MergeTree"
+ENGINE_PARTITION_KEY "toYYYYMMDD(timestamp)"
+ENGINE_SORTING_KEY "company_id, timestamp"
+```
+
+## Pipes (Transformaciones)
+
+### cases_by_status
+
+Agregación de casos por estado:
+
+```sql
+-- cases_by_status.pipe
+NODE aggregate
+SQL >
+    SELECT
+        company_id,
+        status,
+        count() as count,
+        sum(claim_amount) as total_claim_amount,
+        avg(claim_amount) as avg_claim_amount
+    FROM cases_ds
+    GROUP BY company_id, status
+
+TYPE materialized
+DATASOURCE cases_by_status_mv
+```
+
+### risk_distribution
+
+Distribución de riesgo por empresa:
+
+```sql
+-- risk_distribution.pipe
+NODE aggregate
+SQL >
+    SELECT
+        company_id,
+        risk_level,
+        count() as count,
+        sum(claim_amount) as exposure
+    FROM cases_ds
+    WHERE status IN ('EN_TRAMITE', 'EN_EJECUCION')
+    GROUP BY company_id, risk_level
+
+TYPE materialized
+DATASOURCE risk_distribution_mv
+```
+
+### timeline_metrics
+
+Métricas temporales de movimientos:
+
+```sql
+-- timeline_metrics.pipe
+NODE daily_movements
+SQL >
+    SELECT
+        company_id,
+        toDate(date) as day,
+        count() as movement_count,
+        countIf(classification = 'RESOLUCION') as resolutions,
+        countIf(is_notification = 1) as notifications
+    FROM movements_ds
+    WHERE date >= today() - 90
+    GROUP BY company_id, day
+
+TYPE materialized
+DATASOURCE timeline_metrics_mv
+```
+
+## API Endpoints
+
+### /cases_summary
+
+Resumen de cartera de casos:
+
+```sql
+-- cases_summary.pipe
+NODE endpoint
+SQL >
+    %
+    SELECT
+        status,
+        count,
+        total_claim_amount,
+        avg_claim_amount
+    FROM cases_by_status_mv
+    WHERE company_id = {{String(company_id, required=True)}}
+
+TYPE endpoint
+```
+
+Uso:
+
+```bash
+curl "https://api.tinybird.co/v0/pipes/cases_summary.json?company_id=cmp_xyz789" \
+  -H "Authorization: Bearer $TINYBIRD_TOKEN"
+```
+
+### /risk_report
+
+Reporte de exposición por riesgo:
+
+```sql
+-- risk_report.pipe
+NODE endpoint
+SQL >
+    %
+    SELECT
+        risk_level,
+        count,
+        exposure,
+        round(exposure / sum(exposure) OVER () * 100, 2) as percentage
+    FROM risk_distribution_mv
+    WHERE company_id = {{String(company_id, required=True)}}
+    ORDER BY risk_level DESC
+
+TYPE endpoint
+```
+
+### /trends
+
+Tendencias de movimientos:
+
+```sql
+-- trends.pipe
+NODE endpoint
+SQL >
+    %
+    SELECT
+        day,
+        movement_count,
+        resolutions,
+        notifications,
+        avg(movement_count) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) as moving_avg_7d
+    FROM timeline_metrics_mv
+    WHERE company_id = {{String(company_id, required=True)}}
+    {% if defined(start_date) %}
+        AND day >= {{Date(start_date)}}
+    {% end %}
+    {% if defined(end_date) %}
+        AND day <= {{Date(end_date)}}
+    {% end %}
+    ORDER BY day
+
+TYPE endpoint
+```
+
+## Sincronización (clamo-sync)
+
+El servicio Rust `clamo-sync` sincroniza datos desde las bases de datos de tenant:
+
+```rust
+use sqlx::PgPool;
+use tinybird::Client as TinybirdClient;
+
+pub struct Syncer {
+    control_pool: PgPool,
+    tinybird: TinybirdClient,
+}
+
+impl Syncer {
+    pub async fn sync_all_tenants(&self) -> Result<SyncStats> {
+        let companies = self.get_active_companies().await?;
+        let mut stats = SyncStats::default();
+        
+        for company in companies {
+            match self.sync_tenant(&company).await {
+                Ok(tenant_stats) => stats.merge(tenant_stats),
+                Err(e) => {
+                    tracing::error!(
+                        company_id = %company.id,
+                        error = %e,
+                        "Failed to sync tenant"
+                    );
+                    stats.failed += 1;
+                }
+            }
+        }
+        
+        Ok(stats)
+    }
+    
+    async fn sync_tenant(&self, company: &Company) -> Result<TenantStats> {
+        let tenant_pool = self.get_tenant_pool(&company.id).await?;
+        
+        // Obtener casos modificados desde último sync
+        let cases = sqlx::query_as!(
+            CaseRow,
+            r#"
+            SELECT * FROM cases
+            WHERE updated_at > $1
+            ORDER BY updated_at
+            LIMIT 10000
+            "#,
+            company.last_sync_at,
+        )
+        .fetch_all(&tenant_pool)
+        .await?;
+        
+        if cases.is_empty() {
+            return Ok(TenantStats::default());
+        }
+        
+        // Transformar a formato Tinybird
+        let rows: Vec<TinybirdCaseRow> = cases
+            .iter()
+            .map(|c| TinybirdCaseRow {
+                company_id: company.id.clone(),
+                case_id: c.id.clone(),
+                expediente: c.expediente.clone(),
+                // ... más campos
+            })
+            .collect();
+        
+        // Enviar a Tinybird
+        self.tinybird
+            .ingest("cases_ds", &rows)
+            .await?;
+        
+        // Actualizar marca de tiempo
+        self.update_last_sync(&company.id).await?;
+        
+        Ok(TenantStats {
+            cases_synced: cases.len(),
+        })
+    }
+}
+```
+
+## Dashboards
+
+### Componentes de Dashboard
+
+```typescript
+// Dashboard de cartera
+export function PortfolioDashboard({ companyId }: Props) {
+  const { data: summary } = useTinybirdQuery('cases_summary', { company_id: companyId });
+  const { data: risk } = useTinybirdQuery('risk_report', { company_id: companyId });
+  const { data: trends } = useTinybirdQuery('trends', { company_id: companyId });
+  
+  return (
+    <div className="grid grid-cols-3 gap-4">
+      <StatusCard data={summary} />
+      <RiskChart data={risk} />
+      <TrendChart data={trends} />
+    </div>
+  );
+}
+```
+
+### Hook de Tinybird
+
+```typescript
+import useSWR from 'swr';
+
+const TINYBIRD_URL = 'https://api.tinybird.co/v0/pipes';
+
+export function useTinybirdQuery<T>(
+  pipe: string,
+  params: Record<string, string>,
+) {
+  const queryString = new URLSearchParams(params).toString();
+  const url = `${TINYBIRD_URL}/${pipe}.json?${queryString}`;
+  
+  return useSWR<T>(url, async (url) => {
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${process.env.TINYBIRD_TOKEN}`,
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error('Tinybird query failed');
+    }
+    
+    const { data } = await response.json();
+    return data;
+  });
+}
+```
+
+## Métricas Clave
+
+| Métrica | Descripción | Query |
+|---------|-------------|-------|
+| Casos Activos | Total de casos en trámite | `SELECT count() FROM cases_ds WHERE status = 'EN_TRAMITE'` |
+| Exposición Total | Suma de montos demandados | `SELECT sum(claim_amount) FROM cases_ds WHERE status IN ('EN_TRAMITE', 'EN_EJECUCION')` |
+| Casos de Alto Riesgo | Casos con riesgo HIGH o CRITICAL | `SELECT count() FROM cases_ds WHERE risk_level IN ('HIGH', 'CRITICAL')` |
+| Movimientos/Día | Promedio de movimientos diarios | `SELECT avg(movement_count) FROM timeline_metrics_mv` |
+| Tiempo en Etapa | Duración promedio por etapa | Calculado desde `case_progress` |
+
+## Configuración
+
+### Variables de Entorno
+
+```bash
+# Tinybird
+TINYBIRD_TOKEN=p.eyJ...
+TINYBIRD_API_URL=https://api.tinybird.co
+
+# Sync
+SYNC_INTERVAL_SECONDS=300
+SYNC_BATCH_SIZE=10000
+```
+
+### Despliegue de Pipes
+
+```bash
+# Usando Tinybird CLI
+tb push datasources/
+tb push pipes/
+tb push endpoints/
+```
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="Seguridad"
+    icon="shield"
+    href="/arquitectura/seguridad"
+  >
+    Arquitectura de seguridad.
+  </Card>
+  <Card
+    title="Pipeline de Datos"
+    icon="database"
+    href="/arquitectura/pipeline-datos"
+  >
+    Flujo de datos desde el CEJ.
+  </Card>
+</CardGroup>
+

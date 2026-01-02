@@ -1,0 +1,307 @@
+---
+title: Entorno Local
+description: Configura tu entorno de desarrollo local con clamo-setup CLI
+---
+
+# Configuración del Entorno Local
+
+Esta guía explica cómo configurar el entorno de desarrollo local de Clamo usando el CLI `clamo-setup`.
+
+## Prerrequisitos
+
+Antes de comenzar, asegúrate de tener instalado:
+
+- **uv** (gestor de paquetes Python) - [Instalación](https://docs.astral.sh/uv/)
+- **pnpm** - `npm install -g pnpm`
+- **Docker** (para servicios como CEJ connector)
+- **Node.js 20+**
+- **Python 3.10+**
+
+### Instalar uv
+
+<CodeGroup>
+
+```bash Linux/macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+```powershell Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+```bash Homebrew
+brew install uv
+```
+
+</CodeGroup>
+
+Verifica la instalación:
+
+```bash
+uv --version
+uvx --version
+```
+
+## Instalación del CLI
+
+### Opción 1: Instalación Global (Recomendada)
+
+```bash
+# Navega al directorio clamo-setup
+cd /ruta/a/clamo/clamo-setup
+
+# Instala globalmente
+uv tool install . --force
+```
+
+Reinicia tu terminal y verifica:
+
+```bash
+clamo --help
+```
+
+### Opción 2: Instalación de Desarrollo
+
+```bash
+cd clamo-setup
+uv sync
+source .venv/bin/activate
+
+# Navega al directorio raíz de clamo
+cd /ruta/a/clamo
+clamo --help
+```
+
+## Configuración Inicial
+
+Ejecuta el setup interactivo desde el directorio raíz de Clamo:
+
+```bash
+cd /ruta/a/clamo
+clamo dev setup
+```
+
+El wizard te preguntará:
+
+1. **Servicios a ejecutar**: Selecciona qué servicios necesitas
+2. **Fuente de clamo-commons**: Local (desarrollo) o publicado (GitHub registry)
+3. **Configuración del CEJ connector**: URLs y credenciales
+
+La configuración se guarda en `clamo.dev.config.json`.
+
+## Servicios Disponibles
+
+| Servicio | Descripción | Tipo |
+|----------|-------------|------|
+| `clamo-web` | Frontend Next.js | Local |
+| `clamo-cases` | API de casos | Local |
+| `clamo-tenant` | API de tenants | Local |
+| `clamo-dashboards` | API de dashboards (Rust) | Local |
+| `clamo-widget-server` | Servidor de widgets | Local |
+| `javi` | Agente IA de casos | Local |
+| `clamy` | Agente IA de analytics | Local |
+| `clamo-cej-connector` | Conector CEJ | Docker |
+| `clamo-cej-discovery` | Discovery workers | Docker |
+| `clamo-ingest-go` | Worker de ingesta | Docker |
+
+## Comandos Principales
+
+### Desarrollo
+
+```bash
+# Configuración interactiva
+clamo dev setup
+
+# Iniciar servicios
+clamo dev start
+
+# Iniciar y reconstruir contenedores Docker
+clamo dev start --rebuild
+
+# Detener servicios Docker
+clamo dev stop
+
+# Reiniciar todos los servicios
+clamo dev restart
+```
+
+### Gestión de Commons
+
+```bash
+# Usar clamo-commons local (desarrollo)
+clamo commons use-local
+
+# Usar clamo-commons publicado
+clamo commons use-remote
+
+# Ver estado actual
+clamo commons status
+
+# Validar que no hay dependencias locales (para CI)
+clamo commons enforce-remote
+```
+
+### Base de Datos
+
+```bash
+# Ejecutar migraciones en staging
+clamo db migrate stg
+
+# Ejecutar migraciones en producción
+clamo db migrate prd
+
+# Ver estado de migraciones
+clamo db status stg
+
+# Abrir Prisma Studio
+clamo db studio stg
+```
+
+### CLI
+
+```bash
+# Actualizar el CLI
+clamo update
+
+# Desinstalar
+clamo uninstall
+```
+
+## Flujo de Trabajo Típico
+
+### Desarrollo Diario
+
+```bash
+# Setup inicial (solo una vez)
+clamo dev setup
+
+# Iniciar servicios
+clamo dev start
+
+# ... trabaja en tu código ...
+
+# Ctrl+C para detener
+
+# Si necesitas reiniciar
+clamo dev restart
+```
+
+### Trabajando en clamo-commons
+
+```bash
+# Cambia a commons local
+clamo commons use-local
+
+# Haz cambios en clamo-commons
+cd clamo-commons
+# ... edita código ...
+pnpm build
+
+# Antes de commit, vuelve a remoto
+clamo commons use-remote
+```
+
+## Hot Reload
+
+Todos los servicios tienen hot reload habilitado:
+
+| Servicio | Hot Reload |
+|----------|------------|
+| clamo-web (Next.js) | Automático |
+| clamo-cases | Via `pnpm dev` |
+| clamo-tenant | Via `pnpm dev` |
+| clamo-analytics (FastAPI) | Via `uvicorn --reload` |
+| javi / clamy (LangGraph) | Via `langgraph dev` |
+| clamo-cej-connector (Docker) | Via volume mounting |
+
+<Warning>
+Cambios en `clamo-commons` requieren rebuild manual:
+```bash
+cd clamo-commons && pnpm build
+```
+</Warning>
+
+## Cuándo Reconstruir Contenedores
+
+**Necesitas `--rebuild` cuando:**
+- Cambian dependencias (`pyproject.toml`, `uv.lock`)
+- Cambia el Dockerfile
+- Se actualiza la imagen base
+
+```bash
+clamo dev restart --rebuild
+```
+
+**NO necesitas rebuild para:**
+- Cambios en código Python (hot reload)
+- Cambios en `.env`
+- Cambios en runtime
+
+## Variables de Entorno
+
+Crea un archivo `.env` en el directorio raíz:
+
+```bash
+# Base de datos
+CONTROL_DATABASE_URL=postgresql://...
+TENANT_DATABASE_URL=postgresql://...
+
+# WorkOS
+WORKOS_API_KEY=sk_...
+WORKOS_CLIENT_ID=client_...
+
+# Neon
+NEON_API_KEY=...
+
+# CEJ (opcional)
+CEJ_REMOTE_URL=https://staging-cej.getclamo.com/api
+```
+
+## Solución de Problemas
+
+<AccordionGroup>
+  <Accordion title="Error: clamo command not found">
+    Asegúrate de haber reiniciado tu terminal después de instalar el CLI.
+    Si usaste instalación de desarrollo, activa el virtualenv:
+    ```bash
+    source .venv/bin/activate
+    ```
+  </Accordion>
+  
+  <Accordion title="Docker containers no inician">
+    Verifica que Docker esté corriendo:
+    ```bash
+    docker ps
+    ```
+    Si hay contenedores huérfanos:
+    ```bash
+    clamo dev stop
+    docker system prune
+    clamo dev start --rebuild
+    ```
+  </Accordion>
+  
+  <Accordion title="Error de conexión a base de datos">
+    Verifica que las URLs en `.env` sean correctas y que tengas acceso de red a Neon/Supabase.
+  </Accordion>
+</AccordionGroup>
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="Servicios"
+    icon="server"
+    href="/servicios/catalogo"
+  >
+    Documentación detallada de cada servicio.
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api-reference/introduccion"
+  >
+    Endpoints disponibles para integración.
+  </Card>
+</CardGroup>
+

@@ -1,0 +1,71 @@
+---
+title: Variables de Entorno
+description: Variables de entorno comunes para los servicios de Clamo
+---
+
+## Variables de Entorno
+
+### Base de Datos
+
+```bash
+# Control database (Supabase)
+CONTROL_DATABASE_URL=postgresql://user:pass@host:5432/control?sslmode=require
+
+# Tenant database template (Neon)
+# Las conexiones de tenant se resuelven dinámicamente desde Vault
+```
+
+### WorkOS (Autenticación)
+
+```bash
+WORKOS_API_KEY=sk_live_...
+WORKOS_CLIENT_ID=client_...
+WORKOS_REDIRECT_URI=http://localhost:3000/callback
+```
+
+### Neon (Base de Datos)
+
+```bash
+NEON_API_KEY=...
+NEON_PROJECT_ID=...
+```
+
+### Supabase (Vault)
+
+```bash
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...
+```
+
+### Tinybird (Analytics)
+
+```bash
+TINYBIRD_TOKEN=p.eyJ...
+TINYBIRD_API_URL=https://api.tinybird.co
+```
+
+### Anthropic (IA)
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### SendGrid (Email)
+
+```bash
+SENDGRID_API_KEY=SG.xxx
+```
+
+### Kafka (Mensajería)
+
+```bash
+KAFKA_BROKERS=localhost:9092
+```
+
+### Temporal (Orquestación)
+
+```bash
+TEMPORAL_ADDRESS=localhost:7233
+TEMPORAL_NAMESPACE=clamo
+```
+

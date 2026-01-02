@@ -1,0 +1,189 @@
+---
+title: Arquitectura
+description: Visión general de los componentes y servicios que conforman la plataforma Clamo
+---
+
+# Arquitectura del Sistema
+
+Clamo está construido como una arquitectura de microservicios distribuida, optimizada para el procesamiento de datos legales y la escalabilidad multi-tenant.
+
+## Diagrama General
+
+```mermaid
+flowchart TB
+    subgraph Frontend [Capa Frontend]
+        WebApp[clamo-web-app<br/>Next.js 16]
+        DesktopApp[clamo-desktop-app<br/>Electron]
+        UI[clamo-ui<br/>Componentes]
+    end
+
+    subgraph API [Capa de APIs]
+        Tenant[clamo-tenant<br/>Hono/TypeScript]
+        Cases[clamo-cases<br/>Hono/TypeScript]
+        Mailing[clamo-mailing<br/>React Email]
+        Dashboards[clamo-dashboards<br/>Rust/Axum]
+        Widget[clamo-widget-server<br/>TypeScript]
+    end
+
+    subgraph AI [Asistentes IA]
+        AskClamo[ask-clamo<br/>LangGraph]
+        Javi[javi<br/>Casos]
+        Clamy[clamy<br/>Analytics]
+    end
+
+    subgraph Pipeline [Pipeline de Datos]
+        CEJ[clamo-cej-connector<br/>Python/Temporal]
+        Discovery[clamo-cej-discovery<br/>Python]
+        Ingest[clamo-ingest-go<br/>Go/Kafka]
+        Sync[clamo-sync<br/>Rust]
+    end
+
+    subgraph Storage [Almacenamiento]
+        DB[(clamo-database<br/>Neon PostgreSQL)]
+        Analytics[(clamo-clickhouse<br/>Tinybird)]
+    end
+
+    WebApp --> Tenant
+    WebApp --> Cases
+    DesktopApp --> Cases
+    Tenant --> DB
+    Cases --> DB
+    CEJ --> Ingest
+    Ingest --> DB
+    Sync --> Analytics
+    AskClamo --> Cases
+```
+
+## Componentes por Capa
+
+### Capa Frontend
+
+| Servicio | Tecnología | Descripción |
+|----------|------------|-------------|
+| `clamo-web-app` | Next.js 16, React 19 | Aplicación web principal con dashboard, gestión de casos y onboarding |
+| `clamo-desktop-app` | Electron, TypeScript | Aplicación de escritorio para acceso offline |
+| `clamo-ui` | React, Radix UI | Librería de componentes compartidos |
+
+### Capa de APIs
+
+| Servicio | Tecnología | Puerto | Descripción |
+|----------|------------|--------|-------------|
+| `clamo-tenant` | Hono, TypeScript | 4001 | Gestión de empresas, usuarios, onboarding y configuración |
+| `clamo-cases` | Hono, TypeScript | 4000 | CRUD de casos, movimientos, hitos y documentos |
+| `clamo-mailing` | React Email, SendGrid | 4002 | Envío de emails transaccionales y notificaciones |
+| `clamo-dashboards` | Rust, Axum | 8020 | API de dashboards y widgets personalizables |
+| `clamo-widget-server` | TypeScript | 3005 | Servidor de widgets embebibles |
+
+### Asistentes IA
+
+| Servicio | Tecnología | Descripción |
+|----------|------------|-------------|
+| `ask-clamo` | LangGraph, Python | Agente unificado que consolida Javi y Clamy |
+| `javi` | LangGraph, Python | Asistente especializado en consultas de casos |
+| `clamy` | LangGraph, Python | Asistente de analytics con integración MCP/Tinybird |
+
+### Pipeline de Datos
+
+| Servicio | Tecnología | Descripción |
+|----------|------------|-------------|
+| `clamo-cej-connector` | Python, Temporal | Scraping del CEJ con browser automation y normalización LLM |
+| `clamo-cej-discovery` | Python | Descubrimiento de nuevos expedientes por RUC |
+| `clamo-ingest-go` | Go, Kafka | Worker de ingesta de alta performance con batch inserts |
+| `clamo-sync` | Rust | Sincronización de datos hacia Tinybird para analytics |
+
+### Almacenamiento
+
+| Servicio | Tecnología | Descripción |
+|----------|------------|-------------|
+| `clamo-database` | Prisma, Neon | Esquemas y migraciones para base de datos multi-tenant |
+| `clamo-clickhouse` | Tinybird | Configuración de datasources y pipes para analytics |
+
+## Modelo Multi-Tenant
+
+Clamo implementa un modelo de **database-per-tenant** usando Neon PostgreSQL:
+
+```mermaid
+flowchart LR
+    subgraph Control [Base de Datos de Control - Supabase]
+        Companies[Companies]
+        Users[Users]
+        CompanyDB[CompanyDatabase]
+        Vault[Vault Secrets]
+    end
+
+    subgraph Tenants [Bases de Datos de Tenants - Neon]
+        T1[(Tenant 1<br/>Branch)]
+        T2[(Tenant 2<br/>Branch)]
+        T3[(Tenant 3<br/>Branch)]
+    end
+
+    CompanyDB --> T1
+    CompanyDB --> T2
+    CompanyDB --> T3
+```
+
+### Flujo de Provisioning
+
+1. Admin crea una empresa en el panel de administración
+2. `clamo-tenant` crea una Organization en WorkOS
+3. Se provisiona un nuevo branch en Neon
+4. Las credenciales se almacenan en Supabase Vault
+5. Se envía invitación al administrador de la empresa
+
+## Flujo de Datos del CEJ
+
+```mermaid
+sequenceDiagram
+    participant S as Scheduler
+    participant CEJ as clamo-cej-connector
+    participant T as Temporal
+    participant LLM as Anthropic
+    participant K as Kafka
+    participant I as clamo-ingest-go
+    participant DB as Neon Database
+
+    S->>CEJ: Trigger job
+    CEJ->>T: Start workflow
+    T->>CEJ: Browser search (Steel)
+    CEJ->>CEJ: Parse HTML
+    CEJ->>LLM: Normalize data
+    LLM-->>CEJ: Structured payload
+    CEJ->>K: Publish CASE_READY
+    K->>I: Consume event
+    I->>DB: Batch insert (COPY)
+```
+
+## Autenticación y Seguridad
+
+- **WorkOS AuthKit**: SSO, invitaciones y gestión de organizaciones
+- **Supabase Vault**: Almacenamiento seguro de secretos y credenciales
+- **Row Level Security**: Aislamiento de datos por tenant en queries
+
+## Paquetes Compartidos
+
+| Paquete | Descripción |
+|---------|-------------|
+| `@getclamo/contracts` | Schemas Zod y tipos TypeScript compartidos |
+| `@getclamo/database` | Cliente Prisma y utilidades de base de datos |
+| `@getclamo/tenant-sdk` | SDK para integración con el servicio de tenants |
+| `@getclamo/cases-sdk` | SDK para integración con el servicio de casos |
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="Inicio Rápido"
+    icon="rocket"
+    href="/inicio/inicio-rapido"
+  >
+    Comienza a integrar con las APIs de Clamo.
+  </Card>
+  <Card
+    title="Servicios"
+    icon="server"
+    href="/servicios/catalogo"
+  >
+    Documentación detallada de cada servicio.
+  </Card>
+</CardGroup>
+

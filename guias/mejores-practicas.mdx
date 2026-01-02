@@ -1,0 +1,513 @@
+---
+title: Mejores Prácticas
+description: Recomendaciones para una integración robusta con Clamo
+---
+
+# Mejores Prácticas
+
+Esta guía recopila las mejores prácticas para integrar tu aplicación con Clamo de manera eficiente y robusta.
+
+## Autenticación
+
+### Almacenamiento Seguro de Tokens
+
+<Warning>
+**Nunca almacenes tokens en localStorage o sessionStorage**. Usa cookies HttpOnly para el navegador.
+</Warning>
+
+```typescript
+// Correcto: Cookie HttpOnly (Next.js)
+import { cookies } from 'next/headers';
+
+export async function setSession(accessToken: string, refreshToken: string) {
+  const cookieStore = cookies();
+  
+  cookieStore.set('access_token', accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 60 * 60, // 1 hora
+  });
+  
+  cookieStore.set('refresh_token', refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 7, // 7 días
+  });
+}
+```
+
+### Refresh Proactivo
+
+Renueva el token antes de que expire:
+
+```typescript
+class TokenManager {
+  private accessToken: string;
+  private expiresAt: number;
+  
+  async getToken(): Promise<string> {
+    // Renovar si quedan menos de 5 minutos
+    if (this.expiresAt - Date.now() < 5 * 60 * 1000) {
+      await this.refresh();
+    }
+    return this.accessToken;
+  }
+  
+  private async refresh() {
+    const { accessToken, expiresIn } = await refreshAccessToken();
+    this.accessToken = accessToken;
+    this.expiresAt = Date.now() + expiresIn * 1000;
+  }
+}
+```
+
+## Llamadas a la API
+
+### Centralizar Cliente
+
+Usa un cliente centralizado para todas las llamadas:
+
+```typescript
+// lib/clamo.ts
+class ClamoClient {
+  private baseUrl = process.env.CLAMO_API_URL;
+  private tokenManager: TokenManager;
+  
+  constructor() {
+    this.tokenManager = new TokenManager();
+  }
+  
+  async request<T>(
+    method: string,
+    path: string,
+    body?: unknown
+  ): Promise<T> {
+    const token = await this.tokenManager.getToken();
+    const session = await this.getSessionToken();
+    
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'x-clamo-session': session,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    
+    if (!response.ok) {
+      throw await this.handleError(response);
+    }
+    
+    return response.json();
+  }
+  
+  // Métodos tipados
+  cases = {
+    list: (params?: CaseListParams) => 
+      this.request<CaseListResponse>('GET', `/v1/cases?${new URLSearchParams(params)}`),
+    get: (id: string) => 
+      this.request<Case>('GET', `/v1/cases/${id}`),
+    update: (id: string, data: UpdateCaseData) => 
+      this.request<Case>('PATCH', `/v1/cases/${id}`, data),
+  };
+}
+
+export const clamo = new ClamoClient();
+```
+
+### Evitar N+1 Queries
+
+En lugar de hacer múltiples llamadas, usa los endpoints de lista:
+
+```typescript
+// Incorrecto: N+1 queries
+const caseIds = ['case_1', 'case_2', 'case_3'];
+const cases = await Promise.all(
+  caseIds.map(id => clamo.cases.get(id))
+);
+
+// Correcto: Una sola llamada con filtro
+const { data: cases } = await clamo.cases.list({
+  ids: caseIds.join(','),
+});
+```
+
+### Paginación Eficiente
+
+Para grandes conjuntos de datos, pagina correctamente:
+
+```typescript
+async function* getAllCases(): AsyncGenerator<Case> {
+  let page = 1;
+  let hasMore = true;
+  
+  while (hasMore) {
+    const { data, pagination } = await clamo.cases.list({
+      page: page.toString(),
+      limit: '100',
+    });
+    
+    for (const caso of data) {
+      yield caso;
+    }
+    
+    hasMore = page < pagination.totalPages;
+    page++;
+  }
+}
+
+// Uso
+for await (const caso of getAllCases()) {
+  processCase(caso);
+}
+```
+
+## Caché
+
+### Caché de Datos Estáticos
+
+Cachea datos que cambian poco:
+
+```typescript
+import { unstable_cache } from 'next/cache';
+
+// Cachear taxonomía por 1 hora
+const getStages = unstable_cache(
+  async () => {
+    return clamo.request('GET', '/v1/taxonomy/stages');
+  },
+  ['taxonomy-stages'],
+  { revalidate: 3600 }
+);
+
+// Cachear empresa por 5 minutos
+const getCompany = unstable_cache(
+  async (companyId: string) => {
+    return clamo.request('GET', `/v1/companies/${companyId}`);
+  },
+  ['company'],
+  { revalidate: 300 }
+);
+```
+
+### Invalidación de Caché
+
+Invalida el caché cuando los datos cambian:
+
+```typescript
+import { revalidateTag } from 'next/cache';
+
+async function updateCase(id: string, data: UpdateCaseData) {
+  const result = await clamo.cases.update(id, data);
+  
+  // Invalidar caché relacionado
+  revalidateTag(`case-${id}`);
+  revalidateTag('cases-list');
+  
+  return result;
+}
+```
+
+## Optimistic Updates
+
+Actualiza la UI antes de confirmar con el servidor:
+
+```typescript
+function useCaseUpdate(caseId: string) {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: (data: UpdateCaseData) => 
+      clamo.cases.update(caseId, data),
+    
+    onMutate: async (newData) => {
+      // Cancelar queries en vuelo
+      await queryClient.cancelQueries({ queryKey: ['case', caseId] });
+      
+      // Snapshot del estado anterior
+      const previousCase = queryClient.getQueryData(['case', caseId]);
+      
+      // Optimistic update
+      queryClient.setQueryData(['case', caseId], (old: Case) => ({
+        ...old,
+        ...newData,
+      }));
+      
+      return { previousCase };
+    },
+    
+    onError: (err, newData, context) => {
+      // Rollback en caso de error
+      queryClient.setQueryData(['case', caseId], context?.previousCase);
+    },
+    
+    onSettled: () => {
+      // Refetch para asegurar consistencia
+      queryClient.invalidateQueries({ queryKey: ['case', caseId] });
+    },
+  });
+}
+```
+
+## Webhooks
+
+### Idempotencia
+
+Asegúrate de que procesar el mismo webhook múltiples veces no cause problemas:
+
+```typescript
+const processedEvents = new Set<string>();
+
+async function handleWebhook(event: WebhookEvent) {
+  // Verificar si ya fue procesado
+  if (processedEvents.has(event.id)) {
+    console.log(`Event ${event.id} already processed, skipping`);
+    return;
+  }
+  
+  // O usar base de datos para persistencia
+  const existing = await db.processedWebhooks.findUnique({
+    where: { eventId: event.id },
+  });
+  
+  if (existing) {
+    return;
+  }
+  
+  // Procesar evento
+  await processEvent(event);
+  
+  // Marcar como procesado
+  await db.processedWebhooks.create({
+    data: { eventId: event.id, processedAt: new Date() },
+  });
+}
+```
+
+### Procesamiento Asíncrono
+
+No bloquees el webhook esperando procesamiento largo:
+
+```typescript
+app.post('/webhooks/clamo', async (req, res) => {
+  // Verificar firma...
+  
+  // Encolar para procesamiento asíncrono
+  await queue.add('webhook', {
+    event: req.body,
+    receivedAt: new Date(),
+  });
+  
+  // Responder inmediatamente
+  res.json({ received: true });
+});
+
+// Worker separado
+queue.process('webhook', async (job) => {
+  const { event } = job.data;
+  await processWebhook(event);
+});
+```
+
+## Manejo de Errores
+
+### Errores Específicos vs Genéricos
+
+Proporciona mensajes útiles al usuario:
+
+```typescript
+function getErrorMessage(error: ClamoApiError): string {
+  // Errores específicos con contexto
+  const specificMessages: Record<string, string> = {
+    'CASE_NOT_FOUND': 'El caso que buscas no existe o fue eliminado.',
+    'CASE_ARCHIVED': 'Este caso está archivado y no puede ser modificado.',
+    'PLAN_LIMIT_EXCEEDED': 'Has alcanzado el límite de tu plan. Actualiza para continuar.',
+    'DUPLICATE_EXPEDIENTE': 'Ya existe un caso con este número de expediente.',
+  };
+  
+  if (specificMessages[error.code]) {
+    return specificMessages[error.code];
+  }
+  
+  // Mensajes genéricos por categoría
+  if (error.statusCode === 401) {
+    return 'Tu sesión ha expirado. Por favor, inicia sesión nuevamente.';
+  }
+  
+  if (error.statusCode === 403) {
+    return 'No tienes permisos para realizar esta acción.';
+  }
+  
+  if (error.statusCode && error.statusCode >= 500) {
+    return 'Ocurrió un error en el servidor. Intenta de nuevo en unos minutos.';
+  }
+  
+  return 'Ocurrió un error inesperado.';
+}
+```
+
+## Seguridad
+
+### Validación de Entrada
+
+Valida datos antes de enviar a la API:
+
+```typescript
+import { z } from 'zod';
+
+const UpdateCaseSchema = z.object({
+  riskLevel: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
+  claimAmount: z.number().positive().optional(),
+  notes: z.string().max(5000).optional(),
+});
+
+async function updateCase(id: string, data: unknown) {
+  // Validar antes de enviar
+  const validated = UpdateCaseSchema.parse(data);
+  
+  return clamo.cases.update(id, validated);
+}
+```
+
+### Sanitización de Logs
+
+No loguees datos sensibles:
+
+```typescript
+function sanitizeForLogging(data: unknown): unknown {
+  if (typeof data !== 'object' || data === null) {
+    return data;
+  }
+  
+  const sensitiveKeys = ['password', 'token', 'secret', 'apiKey', 'connectionString'];
+  
+  return Object.fromEntries(
+    Object.entries(data).map(([key, value]) => [
+      key,
+      sensitiveKeys.some(k => key.toLowerCase().includes(k))
+        ? '[REDACTED]'
+        : sanitizeForLogging(value),
+    ])
+  );
+}
+```
+
+## Monitoreo
+
+### Métricas de API
+
+Trackea el rendimiento de las llamadas:
+
+```typescript
+async function trackApiCall<T>(
+  name: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const start = Date.now();
+  
+  try {
+    const result = await fn();
+    
+    metrics.histogram('api_call_duration_ms', Date.now() - start, {
+      endpoint: name,
+      status: 'success',
+    });
+    
+    return result;
+  } catch (error) {
+    metrics.histogram('api_call_duration_ms', Date.now() - start, {
+      endpoint: name,
+      status: 'error',
+      errorCode: error instanceof ClamoApiError ? error.code : 'unknown',
+    });
+    
+    throw error;
+  }
+}
+
+// Uso
+const cases = await trackApiCall('cases.list', () => 
+  clamo.cases.list({ status: 'EN_TRAMITE' })
+);
+```
+
+## Testing
+
+### Mocks para Tests
+
+Mockea el cliente de Clamo en tests:
+
+```typescript
+// __mocks__/clamo.ts
+export const clamo = {
+  cases: {
+    list: jest.fn(),
+    get: jest.fn(),
+    update: jest.fn(),
+  },
+};
+
+// test.spec.ts
+import { clamo } from '../lib/clamo';
+
+jest.mock('../lib/clamo');
+
+describe('CaseList', () => {
+  it('renders cases', async () => {
+    (clamo.cases.list as jest.Mock).mockResolvedValue({
+      data: [
+        { id: 'case_1', expediente: '00001-2024-...' },
+      ],
+      pagination: { total: 1 },
+    });
+    
+    render(<CaseList />);
+    
+    await waitFor(() => {
+      expect(screen.getByText('00001-2024-...')).toBeInTheDocument();
+    });
+  });
+});
+```
+
+## Checklist de Integración
+
+<Steps>
+  <Step title="Autenticación">
+    - Tokens almacenados de forma segura
+    - Refresh automático implementado
+    - Logout limpia todos los tokens
+  </Step>
+  
+  <Step title="API">
+    - Cliente centralizado
+    - Manejo de errores robusto
+    - Rate limiting del lado del cliente
+    - Retry con backoff exponencial
+  </Step>
+  
+  <Step title="Webhooks">
+    - Verificación de firma
+    - Procesamiento idempotente
+    - Procesamiento asíncrono
+    - Logging de entregas
+  </Step>
+  
+  <Step title="Seguridad">
+    - Validación de entrada
+    - Sanitización de logs
+    - HTTPS en producción
+    - Tokens no expuestos en frontend
+  </Step>
+  
+  <Step title="Monitoreo">
+    - Métricas de latencia
+    - Alertas de errores
+    - Logs estructurados
+    - Tracing distribuido
+  </Step>
+</Steps>
+

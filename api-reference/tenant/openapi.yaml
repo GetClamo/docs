@@ -1,0 +1,551 @@
+openapi: 3.1.0
+info:
+  title: Clamo Tenant API
+  description: API para gestión de empresas, usuarios y configuración multi-tenant
+  version: 1.0.0
+  contact:
+    name: Clamo Support
+    url: https://github.com/GetClamo
+
+servers:
+  - url: https://api.clamo.dev
+    description: Producción
+  - url: https://staging-api.clamo.dev
+    description: Staging
+  - url: http://localhost:4001
+    description: Local
+
+security:
+  - bearerAuth: []
+  - sessionAuth: []
+
+tags:
+  - name: Usuario
+    description: Operaciones del usuario actual
+  - name: Empresas (Admin)
+    description: Gestión de empresas (requiere rol admin)
+
+paths:
+  /v1/me:
+    get:
+      tags:
+        - Usuario
+      summary: Obtener usuario actual
+      description: Retorna información del usuario autenticado
+      operationId: getMe
+      responses:
+        '200':
+          description: Usuario encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/me/company:
+    get:
+      tags:
+        - Usuario
+      summary: Obtener empresa del usuario
+      description: Retorna información de la empresa a la que pertenece el usuario
+      operationId: getMyCompany
+      responses:
+        '200':
+          description: Empresa encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Company'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/me/onboarding:
+    patch:
+      tags:
+        - Usuario
+      summary: Completar onboarding
+      description: Actualiza el estado de onboarding del usuario
+      operationId: completeOnboarding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingData'
+      responses:
+        '200':
+          description: Onboarding completado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/admin/companies:
+    post:
+      tags:
+        - Empresas (Admin)
+      summary: Crear empresa
+      description: Crea una nueva empresa con base de datos aprovisionada
+      operationId: createCompany
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCompanyRequest'
+      responses:
+        '201':
+          description: Empresa creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyWithInvitation'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+    get:
+      tags:
+        - Empresas (Admin)
+      summary: Listar empresas
+      description: Lista todas las empresas (solo admin global)
+      operationId: listCompanies
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, provisioning, ready, failed]
+      responses:
+        '200':
+          description: Lista de empresas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /v1/admin/companies/{id}:
+    get:
+      tags:
+        - Empresas (Admin)
+      summary: Obtener empresa
+      description: Obtiene detalle de una empresa específica
+      operationId: getCompany
+      parameters:
+        - $ref: '#/components/parameters/CompanyId'
+      responses:
+        '200':
+          description: Empresa encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags:
+        - Empresas (Admin)
+      summary: Actualizar empresa
+      description: Actualiza datos de una empresa
+      operationId: updateCompany
+      parameters:
+        - $ref: '#/components/parameters/CompanyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCompanyRequest'
+      responses:
+        '200':
+          description: Empresa actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Company'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Empresas (Admin)
+      summary: Eliminar empresa
+      description: Elimina una empresa y todos sus recursos asociados
+      operationId: deleteCompany
+      parameters:
+        - $ref: '#/components/parameters/CompanyId'
+      responses:
+        '204':
+          description: Empresa eliminada
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/admin/companies/{id}/invite:
+    post:
+      tags:
+        - Empresas (Admin)
+      summary: Invitar usuario
+      description: Envía invitación a un nuevo usuario para unirse a la empresa
+      operationId: inviteUser
+      parameters:
+        - $ref: '#/components/parameters/CompanyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteUserRequest'
+      responses:
+        '200':
+          description: Invitación enviada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token de acceso de WorkOS
+    sessionAuth:
+      type: apiKey
+      in: header
+      name: x-clamo-session
+      description: Token de sesión Clamo en base64
+
+  parameters:
+    CompanyId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: ID de la empresa
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          example: usr_abc123
+        workosUserId:
+          type: string
+          example: user_01HQMK...
+        email:
+          type: string
+          format: email
+          example: usuario@empresa.com
+        firstName:
+          type: string
+          nullable: true
+          example: Juan
+        lastName:
+          type: string
+          nullable: true
+          example: Pérez
+        companyId:
+          type: string
+          example: cmp_xyz789
+        role:
+          type: string
+          enum: [admin, member]
+          example: admin
+        onboardingState:
+          type: string
+          enum: [pending_onboarding, completed]
+          example: completed
+        createdAt:
+          type: string
+          format: date-time
+
+    Company:
+      type: object
+      properties:
+        id:
+          type: string
+          example: cmp_xyz789
+        workosOrgId:
+          type: string
+          example: org_01HQMK...
+        name:
+          type: string
+          example: Mi Empresa S.A.C.
+        ruc:
+          type: string
+          nullable: true
+          example: "20123456789"
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+          example: pro
+        databaseStatus:
+          type: string
+          enum: [pending, provisioning, ready, failed]
+          example: ready
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CompanyDetail:
+      allOf:
+        - $ref: '#/components/schemas/Company'
+        - type: object
+          properties:
+            users:
+              type: array
+              items:
+                $ref: '#/components/schemas/User'
+            database:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [active, suspended, deleted]
+                databaseHost:
+                  type: string
+
+    CreateCompanyRequest:
+      type: object
+      required:
+        - name
+        - ownerEmail
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+          example: Mi Empresa S.A.C.
+        ruc:
+          type: string
+          pattern: ^\d{11}$
+          example: "20123456789"
+        ownerEmail:
+          type: string
+          format: email
+          example: admin@miempresa.com
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+          default: free
+
+    UpdateCompanyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        ruc:
+          type: string
+          pattern: ^\d{11}$
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+        settings:
+          type: object
+
+    InviteUserRequest:
+      type: object
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          example: nuevo@empresa.com
+        role:
+          type: string
+          enum: [admin, member]
+          default: member
+
+    OnboardingData:
+      type: object
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        phone:
+          type: string
+        position:
+          type: string
+
+    CompanyWithInvitation:
+      allOf:
+        - $ref: '#/components/schemas/Company'
+        - type: object
+          properties:
+            invitationId:
+              type: string
+            message:
+              type: string
+
+    InvitationResponse:
+      type: object
+      properties:
+        invitationId:
+          type: string
+        email:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+
+    CompanyList:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Company'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+
+  responses:
+    Unauthorized:
+      description: No autenticado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: UNAUTHORIZED
+              message: Token de autenticación requerido
+
+    Forbidden:
+      description: Sin permisos
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: FORBIDDEN
+              message: No tienes permisos para realizar esta acción
+
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: NOT_FOUND
+              message: El recurso solicitado no existe
+
+    ValidationError:
+      description: Error de validación
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Error de validación en los datos enviados
+              details:
+                errors:
+                  - field: email
+                    message: Formato de email inválido
+
+    Conflict:
+      description: Conflicto
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: ALREADY_EXISTS
+              message: Ya existe una empresa con este RUC
+

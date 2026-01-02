@@ -1,0 +1,277 @@
+---
+title: Inicio Rápido
+description: Integra Clamo en tu aplicación en menos de 5 minutos
+---
+
+# Inicio Rápido
+
+Esta guía te ayudará a realizar tu primera integración con las APIs de Clamo.
+
+## Prerrequisitos
+
+Antes de comenzar, necesitas:
+
+- Credenciales de acceso a Clamo (proporcionadas por tu administrador)
+- Un token de sesión válido de WorkOS
+- Node.js 20+ o Python 3.10+ (según tu stack)
+
+## Paso 1: Obtener Token de Autenticación
+
+Clamo utiliza WorkOS AuthKit para autenticación. El token de sesión se obtiene después del login:
+
+<CodeGroup>
+
+```javascript JavaScript
+import { getSession } from '@workos-inc/authkit-nextjs';
+
+const session = await getSession();
+const token = session?.accessToken;
+```
+
+```python Python
+# El token se obtiene del flujo de autenticación WorkOS
+# y se pasa en el header x-clamo-session
+import base64
+import json
+
+session_data = {
+    "userId": "user_123",
+    "organizationId": "org_456",
+    "email": "usuario@empresa.com"
+}
+token = base64.urlsafe_b64encode(json.dumps(session_data).encode()).decode()
+```
+
+</CodeGroup>
+
+## Paso 2: Configurar Headers
+
+Todas las requests a Clamo requieren los siguientes headers:
+
+```bash
+Authorization: Bearer <workos_access_token>
+x-clamo-session: <base64_encoded_session>
+Content-Type: application/json
+```
+
+## Paso 3: Obtener Información del Usuario
+
+<CodeGroup>
+
+```javascript JavaScript
+const response = await fetch('https://api.clamo.dev/v1/me', {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'x-clamo-session': sessionToken,
+  },
+});
+
+const user = await response.json();
+console.log(user);
+// {
+//   id: "usr_abc123",
+//   email: "usuario@empresa.com",
+//   firstName: "Juan",
+//   lastName: "Pérez",
+//   role: "admin",
+//   companyId: "cmp_xyz789"
+// }
+```
+
+```python Python
+import httpx
+
+response = httpx.get(
+    "https://api.clamo.dev/v1/me",
+    headers={
+        "Authorization": f"Bearer {access_token}",
+        "x-clamo-session": session_token,
+    }
+)
+
+user = response.json()
+print(user)
+```
+
+```bash cURL
+curl -X GET https://api.clamo.dev/v1/me \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "x-clamo-session: $SESSION_TOKEN"
+```
+
+</CodeGroup>
+
+## Paso 4: Listar Casos
+
+Una vez autenticado, puedes obtener los casos de tu empresa:
+
+<CodeGroup>
+
+```javascript JavaScript
+const response = await fetch('https://api.clamo.dev/v1/cases', {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'x-clamo-session': sessionToken,
+  },
+});
+
+const { data: cases, pagination } = await response.json();
+
+cases.forEach(caso => {
+  console.log(`${caso.expediente} - ${caso.demandante} vs ${caso.demandado}`);
+  console.log(`  Estado: ${caso.status}`);
+  console.log(`  Riesgo: ${caso.riskLevel}`);
+});
+```
+
+```python Python
+response = httpx.get(
+    "https://api.clamo.dev/v1/cases",
+    headers={
+        "Authorization": f"Bearer {access_token}",
+        "x-clamo-session": session_token,
+    }
+)
+
+data = response.json()
+for caso in data["data"]:
+    print(f"{caso['expediente']} - {caso['demandante']} vs {caso['demandado']}")
+```
+
+```bash cURL
+curl -X GET "https://api.clamo.dev/v1/cases" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "x-clamo-session: $SESSION_TOKEN"
+```
+
+</CodeGroup>
+
+## Paso 5: Obtener Detalle de un Caso
+
+<CodeGroup>
+
+```javascript JavaScript
+const caseId = 'case_abc123';
+
+const response = await fetch(`https://api.clamo.dev/v1/cases/${caseId}`, {
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'x-clamo-session': sessionToken,
+  },
+});
+
+const caso = await response.json();
+
+console.log('Expediente:', caso.expediente);
+console.log('Movimientos:', caso.movements.length);
+console.log('Último movimiento:', caso.movements[0]?.description);
+```
+
+```python Python
+case_id = "case_abc123"
+
+response = httpx.get(
+    f"https://api.clamo.dev/v1/cases/{case_id}",
+    headers={
+        "Authorization": f"Bearer {access_token}",
+        "x-clamo-session": session_token,
+    }
+)
+
+caso = response.json()
+print(f"Expediente: {caso['expediente']}")
+print(f"Movimientos: {len(caso['movements'])}")
+```
+
+</CodeGroup>
+
+## Ejemplo Completo
+
+Aquí tienes un ejemplo completo de integración:
+
+```javascript
+// clamo-client.js
+class ClamoClient {
+  constructor(accessToken, sessionToken) {
+    this.baseUrl = 'https://api.clamo.dev';
+    this.headers = {
+      'Authorization': `Bearer ${accessToken}`,
+      'x-clamo-session': sessionToken,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  async getMe() {
+    const response = await fetch(`${this.baseUrl}/v1/me`, {
+      headers: this.headers,
+    });
+    return response.json();
+  }
+
+  async getCompany() {
+    const response = await fetch(`${this.baseUrl}/v1/me/company`, {
+      headers: this.headers,
+    });
+    return response.json();
+  }
+
+  async listCases(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const response = await fetch(`${this.baseUrl}/v1/cases?${query}`, {
+      headers: this.headers,
+    });
+    return response.json();
+  }
+
+  async getCase(caseId) {
+    const response = await fetch(`${this.baseUrl}/v1/cases/${caseId}`, {
+      headers: this.headers,
+    });
+    return response.json();
+  }
+
+  async getCaseMovements(caseId) {
+    const response = await fetch(`${this.baseUrl}/v1/cases/${caseId}/movements`, {
+      headers: this.headers,
+    });
+    return response.json();
+  }
+}
+
+// Uso
+const client = new ClamoClient(accessToken, sessionToken);
+const user = await client.getMe();
+const cases = await client.listCases({ status: 'EN_TRAMITE' });
+```
+
+## Endpoints Principales
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/v1/me` | Información del usuario actual |
+| GET | `/v1/me/company` | Información de la empresa |
+| GET | `/v1/cases` | Listar casos |
+| GET | `/v1/cases/:id` | Detalle de un caso |
+| GET | `/v1/cases/:id/movements` | Movimientos de un caso |
+| GET | `/v1/cases/:id/milestones` | Hitos procesales |
+| GET | `/v1/cases/:id/progress` | Progreso por etapas |
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="Autenticación"
+    icon="key"
+    href="/guias/autenticacion"
+  >
+    Aprende más sobre el flujo de autenticación con WorkOS.
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/api-reference/introduccion"
+  >
+    Documentación completa de todos los endpoints.
+  </Card>
+</CardGroup>
+

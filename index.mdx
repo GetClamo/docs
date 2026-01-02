@@ -1,97 +1,94 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: Bienvenido a Clamo
+description: Plataforma de gestión de casos legales laborales para el mercado peruano
 ---
 
-## Setting up
+<img
+  className="block dark:hidden"
+  src="/logo/light.svg"
+  alt="Clamo Logo"
+  style={{ height: '60px', marginBottom: '20px' }}
+/>
+<img
+  className="hidden dark:block"
+  src="/logo/dark.svg"
+  alt="Clamo Logo"
+  style={{ height: '60px', marginBottom: '20px' }}
+/>
 
-Get your documentation site up and running in minutes.
+# Plataforma de Gestión Legal
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+Clamo es una plataforma SaaS multi-tenant diseñada para la gestión integral de casos legales laborales en Perú. Automatiza el seguimiento de expedientes judiciales, integra asistentes de IA especializados y proporciona análisis en tiempo real.
 
-## Make it yours
+## Características Principales
 
-Design a docs site that looks great and empowers your users.
+<CardGroup cols={2}>
+  <Card title="Seguimiento Automatizado" icon="radar">
+    Monitoreo automático de expedientes del CEJ (Centro de Justicia Electrónico) con actualizaciones en tiempo real.
+  </Card>
+  <Card title="Multi-Tenancy" icon="building">
+    Arquitectura de base de datos por tenant con Neon PostgreSQL para aislamiento completo de datos.
+  </Card>
+  <Card title="Asistentes IA" icon="robot">
+    Agentes especializados con LangGraph para consultas de casos y análisis predictivo.
+  </Card>
+  <Card title="Analytics Avanzado" icon="chart-line">
+    Dashboards y métricas en tiempo real con Tinybird y ClickHouse.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
+## Comenzar
+
+<CardGroup cols={2}>
   <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
+    title="Introducción"
+    icon="book-open"
+    href="/inicio/introduccion"
   >
-    Edit your docs locally and preview them in real time.
+    Conoce qué es Clamo y cómo puede ayudar a tu equipo legal.
   </Card>
   <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
+    title="Arquitectura"
+    icon="sitemap"
+    href="/inicio/arquitectura"
   >
-    Customize the design and colors of your site to match your brand.
-  </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+    Explora la arquitectura técnica y los componentes del sistema.
   </Card>
   <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
+    title="Inicio Rápido"
+    icon="rocket"
+    href="/inicio/inicio-rapido"
   >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
-
-## Create beautiful pages
-
-Everything you need to create world-class documentation.
-
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+    Integra Clamo en tu aplicación en menos de 5 minutos.
   </Card>
   <Card
-    title="Code samples"
+    title="API Reference"
     icon="code"
-    href="/essentials/code"
+    href="/api-reference/introduccion"
   >
-    Add sample code to demonstrate how to use your product.
+    Documentación completa de los endpoints disponibles.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+</CardGroup>
 
-## Need inspiration?
+## Stack Tecnológico
+
+| Capa | Tecnologías |
+|------|-------------|
+| **Frontend** | Next.js 16, React 19, TypeScript |
+| **APIs** | Hono, Rust/Axum |
+| **Base de Datos** | Neon PostgreSQL, Prisma ORM |
+| **Analytics** | Tinybird, ClickHouse |
+| **IA** | LangGraph, LangChain, Anthropic |
+| **Autenticación** | WorkOS AuthKit |
+| **Mensajería** | Kafka, Temporal |
+
+## Soporte
 
 <Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
+  title="GitHub"
+  icon="github"
+  href="https://github.com/GetClamo"
 >
-  Browse our showcase of exceptional documentation sites.
+  Repositorios y código fuente de la plataforma.
 </Card>
+

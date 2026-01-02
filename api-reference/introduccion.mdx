@@ -1,0 +1,242 @@
+---
+title: Introducción a la API
+description: Convenciones, versionado y estructura de las APIs de Clamo
+---
+
+# Introducción a la API
+
+Las APIs de Clamo siguen principios RESTful y están diseñadas para ser intuitivas y consistentes.
+
+## Base URL
+
+| Entorno | URL |
+|---------|-----|
+| Producción | `https://api.clamo.dev` |
+| Staging | `https://staging-api.clamo.dev` |
+| Local | `http://localhost:4000` (cases), `http://localhost:4001` (tenant) |
+
+## Versionado
+
+Todas las APIs están versionadas usando prefijo en la URL:
+
+```
+https://api.clamo.dev/v1/cases
+```
+
+Actualmente solo existe la versión `v1`. Cuando se introduzcan cambios breaking, se creará una nueva versión manteniendo compatibilidad con la anterior.
+
+## Formato de Requests
+
+### Content-Type
+
+Todas las requests con body deben usar `application/json`:
+
+```bash
+curl -X POST https://api.clamo.dev/v1/cases \
+  -H "Content-Type: application/json" \
+  -d '{"expediente": "00001-2024-0-1234-JR-LA-01"}'
+```
+
+### Headers Requeridos
+
+| Header | Descripción | Requerido |
+|--------|-------------|-----------|
+| `Authorization` | Token Bearer de WorkOS | Sí |
+| `x-clamo-session` | Sesión codificada en base64 | Sí |
+| `Content-Type` | `application/json` | Para POST/PATCH |
+
+## Formato de Responses
+
+### Respuestas Exitosas
+
+Las respuestas exitosas devuelven el recurso directamente o un objeto con metadata:
+
+**Recurso único:**
+
+```json
+{
+  "id": "case_abc123",
+  "expediente": "00001-2024-0-1234-JR-LA-01",
+  "plaintiff": "Juan Pérez",
+  "defendant": "Empresa S.A.C.",
+  "status": "EN_TRAMITE"
+}
+```
+
+**Lista con paginación:**
+
+```json
+{
+  "data": [
+    { "id": "case_abc123", "expediente": "..." },
+    { "id": "case_def456", "expediente": "..." }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 150,
+    "totalPages": 8
+  }
+}
+```
+
+### Respuestas de Error
+
+Los errores siguen un formato consistente:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "El campo 'expediente' es requerido",
+    "details": {
+      "field": "expediente",
+      "constraint": "required"
+    }
+  }
+}
+```
+
+## Paginación
+
+Las listas soportan paginación con los siguientes parámetros:
+
+| Parámetro | Tipo | Default | Descripción |
+|-----------|------|---------|-------------|
+| `page` | number | 1 | Número de página |
+| `limit` | number | 20 | Resultados por página (máx: 100) |
+
+Ejemplo:
+
+```bash
+GET /v1/cases?page=2&limit=50
+```
+
+## Ordenamiento
+
+Usa `sortBy` y `sortOrder` para ordenar resultados:
+
+| Parámetro | Tipo | Default | Valores |
+|-----------|------|---------|---------|
+| `sortBy` | string | `createdAt` | Campo por el cual ordenar |
+| `sortOrder` | string | `desc` | `asc` o `desc` |
+
+Ejemplo:
+
+```bash
+GET /v1/cases?sortBy=filingDate&sortOrder=asc
+```
+
+## Filtrado
+
+Los endpoints de lista soportan filtros específicos:
+
+```bash
+GET /v1/cases?status=EN_TRAMITE&riskLevel=HIGH&district=LIMA
+```
+
+Los filtros disponibles varían por recurso. Consulta la documentación de cada endpoint.
+
+## Búsqueda
+
+Usa el parámetro `search` para búsqueda de texto libre:
+
+```bash
+GET /v1/cases?search=empresa%20sac
+```
+
+La búsqueda se aplica a campos relevantes como `expediente`, `plaintiff`, `defendant`.
+
+## Rate Limiting
+
+Las APIs tienen límites de rate para proteger el servicio:
+
+| Plan | Límite |
+|------|--------|
+| Free | 100 req/min |
+| Pro | 1000 req/min |
+| Enterprise | 10000 req/min |
+
+Headers de respuesta:
+
+```
+X-RateLimit-Limit: 1000
+X-RateLimit-Remaining: 999
+X-RateLimit-Reset: 1704200000
+```
+
+## Códigos HTTP
+
+| Código | Significado |
+|--------|-------------|
+| 200 | OK - Request exitosa |
+| 201 | Created - Recurso creado |
+| 204 | No Content - Eliminación exitosa |
+| 400 | Bad Request - Error de validación |
+| 401 | Unauthorized - Token inválido o expirado |
+| 403 | Forbidden - Sin permisos |
+| 404 | Not Found - Recurso no existe |
+| 409 | Conflict - Conflicto (ej: duplicado) |
+| 422 | Unprocessable Entity - Error de negocio |
+| 429 | Too Many Requests - Rate limit excedido |
+| 500 | Internal Server Error - Error del servidor |
+
+## SDKs Disponibles
+
+<CardGroup cols={2}>
+  <Card title="JavaScript/TypeScript" icon="js">
+    ```bash
+    npm install @getclamo/sdk
+    ```
+  </Card>
+  <Card title="Python" icon="python">
+    ```bash
+    pip install clamo-sdk
+    ```
+  </Card>
+</CardGroup>
+
+## Ejemplo Completo
+
+```javascript
+const response = await fetch('https://api.clamo.dev/v1/cases', {
+  method: 'GET',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'x-clamo-session': sessionToken,
+  },
+});
+
+if (!response.ok) {
+  const error = await response.json();
+  console.error('Error:', error.error.message);
+  return;
+}
+
+const { data: cases, pagination } = await response.json();
+
+console.log(`Mostrando ${cases.length} de ${pagination.total} casos`);
+cases.forEach(caso => {
+  console.log(`${caso.expediente} - ${caso.status}`);
+});
+```
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="Autenticación"
+    icon="key"
+    href="/api-reference/autenticacion"
+  >
+    Aprende a autenticarte con las APIs.
+  </Card>
+  <Card
+    title="Errores"
+    icon="triangle-exclamation"
+    href="/api-reference/errores"
+  >
+    Manejo de errores y códigos de respuesta.
+  </Card>
+</CardGroup>
+

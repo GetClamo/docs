@@ -1,0 +1,284 @@
+---
+title: clamo-tenant
+description: Servicio de gestión de empresas, usuarios y configuración multi-tenant
+---
+
+# clamo-tenant
+
+Servicio central para la gestión de tenants (empresas), usuarios, onboarding y configuración del sistema multi-tenant.
+
+## Información General
+
+| Propiedad | Valor |
+|-----------|-------|
+| **Repositorio** | `GetClamo/clamo-tenant` |
+| **Lenguaje** | TypeScript |
+| **Framework** | Hono |
+| **Puerto** | 4001 |
+| **Base de Datos** | Neon PostgreSQL (via Prisma) |
+
+## Responsabilidades
+
+- Gestión del ciclo de vida de empresas (crear, actualizar, eliminar)
+- Provisioning de bases de datos por tenant en Neon
+- Integración con WorkOS para autenticación y organizaciones
+- Gestión de usuarios y roles
+- Flujo de onboarding para nuevas empresas
+- Almacenamiento de credenciales en Supabase Vault
+
+## Arquitectura
+
+```mermaid
+flowchart TB
+    subgraph API [API Layer]
+        Routes[Routes]
+        Controllers[Controllers]
+        Middleware[Auth Middleware]
+    end
+    
+    subgraph Domain [Domain Layer]
+        CompanyService[CompanyService]
+        UserService[UserService]
+        ProvisioningService[ProvisioningService]
+        DeletionService[DeletionService]
+    end
+    
+    subgraph Infrastructure [Infrastructure]
+        Prisma[Prisma Client]
+        WorkOS[WorkOS Client]
+        Neon[Neon Client]
+        Vault[Vault Client]
+        Kafka[Kafka Adapter]
+    end
+    
+    Routes --> Controllers
+    Controllers --> Middleware
+    Controllers --> CompanyService
+    Controllers --> UserService
+    CompanyService --> ProvisioningService
+    CompanyService --> DeletionService
+    ProvisioningService --> Neon
+    ProvisioningService --> Vault
+    ProvisioningService --> WorkOS
+    CompanyService --> Prisma
+    UserService --> Prisma
+    UserService --> WorkOS
+```
+
+## Endpoints Principales
+
+### Usuarios
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/v1/me` | Obtener usuario actual |
+| GET | `/v1/me/company` | Obtener empresa del usuario |
+| PATCH | `/v1/me/onboarding` | Completar onboarding |
+
+### Empresas (Admin)
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| POST | `/v1/admin/companies` | Crear empresa |
+| GET | `/v1/admin/companies` | Listar empresas |
+| GET | `/v1/admin/companies/:id` | Obtener empresa |
+| PATCH | `/v1/admin/companies/:id` | Actualizar empresa |
+| DELETE | `/v1/admin/companies/:id` | Eliminar empresa |
+| POST | `/v1/admin/companies/:id/invite` | Invitar usuario |
+
+## Flujo de Creación de Empresa
+
+```mermaid
+sequenceDiagram
+    participant Admin
+    participant API as clamo-tenant
+    participant WorkOS
+    participant Neon
+    participant Vault
+    participant DB as Control DB
+
+    Admin->>API: POST /v1/admin/companies
+    API->>WorkOS: Create Organization
+    WorkOS-->>API: org_id
+    API->>Neon: Create Branch
+    Neon-->>API: branch_id, connection_uri
+    API->>Vault: Store credentials
+    Vault-->>API: secret_ids
+    API->>DB: Insert Company + CompanyDatabase
+    API->>WorkOS: Send Invitation
+    API-->>Admin: Company created
+```
+
+## Modelo de Datos
+
+### Company
+
+```typescript
+interface Company {
+  id: string;
+  workosOrgId: string;
+  name: string;
+  ruc: string | null;
+  parentId: string | null;
+  plan: 'free' | 'pro' | 'enterprise';
+  settings: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  databaseStatus: 'pending' | 'provisioning' | 'ready' | 'failed';
+  ownerEmail: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+### User
+
+```typescript
+interface User {
+  id: string;
+  workosUserId: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  companyId: string;
+  role: 'admin' | 'member';
+  onboardingState: 'pending_onboarding' | 'completed';
+  createdAt: Date;
+}
+```
+
+### CompanyDatabase
+
+```typescript
+interface CompanyDatabase {
+  id: string;
+  companyId: string;
+  neonProjectId: string;
+  neonBranchId: string;
+  neonEndpointId: string | null;
+  databaseName: string;
+  databaseHost: string;
+  databaseUser: string;
+  pooledConnSecretId: string;
+  directConnSecretId: string;
+  status: 'active' | 'suspended' | 'deleted';
+}
+```
+
+## Configuración
+
+### Variables de Entorno
+
+```bash
+# Base de datos de control
+CONTROL_DATABASE_URL=postgresql://user:pass@host:5432/control
+
+# WorkOS
+WORKOS_API_KEY=sk_...
+WORKOS_CLIENT_ID=client_...
+
+# Neon
+NEON_API_KEY=...
+NEON_PROJECT_ID=...
+
+# Supabase (para Vault)
+SUPABASE_URL=https://...
+SUPABASE_SERVICE_KEY=...
+
+# Kafka (opcional)
+KAFKA_BROKERS=localhost:9092
+```
+
+## Ejemplos de Uso
+
+### Obtener Usuario Actual
+
+```bash
+curl -X GET http://localhost:4001/v1/me \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "x-clamo-session: $SESSION"
+```
+
+Respuesta:
+
+```json
+{
+  "id": "usr_abc123",
+  "email": "usuario@empresa.com",
+  "firstName": "Juan",
+  "lastName": "Pérez",
+  "role": "admin",
+  "onboardingState": "completed",
+  "companyId": "cmp_xyz789"
+}
+```
+
+### Crear Empresa (Admin)
+
+```bash
+curl -X POST http://localhost:4001/v1/admin/companies \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Mi Empresa S.A.C.",
+    "ruc": "20123456789",
+    "ownerEmail": "admin@miempresa.com",
+    "plan": "pro"
+  }'
+```
+
+Respuesta:
+
+```json
+{
+  "id": "cmp_new123",
+  "workosOrgId": "org_workos456",
+  "name": "Mi Empresa S.A.C.",
+  "ruc": "20123456789",
+  "databaseStatus": "ready",
+  "invitationId": "inv_abc",
+  "message": "Empresa creada y base de datos aprovisionada. Invitación enviada al administrador."
+}
+```
+
+### Invitar Usuario
+
+```bash
+curl -X POST http://localhost:4001/v1/admin/companies/cmp_xyz789/invite \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "nuevo@empresa.com",
+    "role": "member"
+  }'
+```
+
+## Desarrollo Local
+
+```bash
+# Instalar dependencias
+pnpm install
+
+# Generar cliente Prisma
+pnpm db:generate
+
+# Ejecutar en modo desarrollo
+pnpm dev
+
+# Build
+pnpm build
+
+# Tests
+pnpm test
+```
+
+## Dependencias Clave
+
+| Paquete | Uso |
+|---------|-----|
+| `@workos-inc/node` | SDK de WorkOS |
+| `@prisma/client` | ORM |
+| `@getclamo/database` | Esquemas compartidos |
+| `@getclamo/contracts` | Tipos y validaciones |
+| `hono` | Framework HTTP |
+| `kafkajs` | Mensajería |
+

@@ -1,0 +1,44 @@
+---
+title: Errores Comunes
+description: Códigos de error frecuentes y sus soluciones
+---
+
+## Errores de Autenticación
+
+| Código | Mensaje | Solución |
+|--------|---------|----------|
+| `UNAUTHORIZED` | Token no proporcionado | Incluir header `Authorization` |
+| `INVALID_TOKEN` | Token malformado | Verificar formato del token |
+| `TOKEN_EXPIRED` | Token expirado | Usar refresh token |
+| `INVALID_SESSION` | Session token inválido | Regenerar session token |
+
+## Errores de Autorización
+
+| Código | Mensaje | Solución |
+|--------|---------|----------|
+| `FORBIDDEN` | Sin permisos | Verificar rol del usuario |
+| `ORGANIZATION_MISMATCH` | Organización incorrecta | Usar token de la organización correcta |
+
+## Errores de Validación
+
+| Código | Mensaje | Solución |
+|--------|---------|----------|
+| `VALIDATION_ERROR` | Error de validación | Revisar campos en `details.errors` |
+| `MISSING_FIELD` | Campo requerido faltante | Incluir el campo indicado |
+| `INVALID_FORMAT` | Formato incorrecto | Corregir formato según spec |
+
+## Errores de Negocio
+
+| Código | Mensaje | Solución |
+|--------|---------|----------|
+| `COMPANY_NOT_READY` | Base de datos no lista | Esperar a `databaseStatus: ready` |
+| `ONBOARDING_INCOMPLETE` | Onboarding pendiente | Completar flujo de onboarding |
+| `PLAN_LIMIT_EXCEEDED` | Límite del plan | Actualizar plan |
+| `CASE_ARCHIVED` | Caso archivado | No se pueden modificar casos archivados |
+
+## Errores de Rate Limiting
+
+| Código | Mensaje | Solución |
+|--------|---------|----------|
+| `RATE_LIMIT_EXCEEDED` | Demasiadas requests | Esperar `retryAfter` segundos |
+

@@ -1,0 +1,52 @@
+---
+title: Headers de Autenticación
+description: Headers requeridos para autenticarse con las APIs de Clamo
+---
+
+## Headers Requeridos
+
+Todas las requests a las APIs de Clamo requieren estos headers:
+
+```bash
+Authorization: Bearer <workos_access_token>
+x-clamo-session: <base64_encoded_session>
+Content-Type: application/json
+```
+
+### Authorization
+
+Token JWT de WorkOS obtenido después del login:
+
+```javascript
+const { accessToken } = await getSession();
+// Usar en header: `Bearer ${accessToken}`
+```
+
+### x-clamo-session
+
+Sesión de Clamo codificada en base64:
+
+```javascript
+const sessionData = {
+  userId: "usr_abc123",
+  workosUserId: "user_01HQMK...",
+  organizationId: "org_xyz789",
+  companyId: "cmp_def456",
+  email: "usuario@empresa.com",
+  role: "admin"
+};
+
+const sessionToken = Buffer.from(
+  JSON.stringify(sessionData)
+).toString('base64url');
+```
+
+### Ejemplo Completo
+
+```bash
+curl -X GET https://api.clamo.dev/v1/cases \
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "x-clamo-session: eyJ1c2VySWQiOiJ1c3JfYWJjMTIzIiwiY29tcGFueUlkIjoiY21wX2RlZjQ1NiJ9" \
+  -H "Content-Type: application/json"
+```
+
