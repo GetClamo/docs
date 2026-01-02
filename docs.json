@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Clamo",
+  "name": "Clamo Internal Docs",
   "colors": {
     "primary": "#3B22FF",
     "light": "#5B4AFF",
@@ -13,95 +13,223 @@
   },
   "favicon": "/favicon.svg",
   "navigation": {
-    "tabs": [
+    "languages": [
       {
-        "tab": "Inicio",
-        "groups": [
+        "language": "es",
+        "tabs": [
           {
-            "group": "Primeros Pasos",
-            "pages": [
-              "index",
-              "inicio/introduccion",
-              "inicio/arquitectura",
-              "inicio/inicio-rapido",
-              "inicio/entorno-local"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Guías",
-        "groups": [
-          {
-            "group": "Integración",
-            "pages": [
-              "guias/autenticacion",
-              "guias/multi-tenancy",
-              "guias/webhooks"
+            "tab": "Inicio",
+            "groups": [
+              {
+                "group": "Primeros Pasos",
+                "pages": [
+                  "es/index",
+                  "es/inicio/introduccion",
+                  "es/inicio/arquitectura",
+                  "es/inicio/inicio-rapido",
+                  "es/inicio/entorno-local"
+                ]
+              }
             ]
           },
           {
-            "group": "Referencia",
-            "pages": [
-              "guias/errores",
-              "guias/mejores-practicas"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Servicios",
-        "groups": [
-          {
-            "group": "Core",
-            "pages": [
-              "servicios/catalogo",
-              "servicios/clamo-tenant",
-              "servicios/clamo-cases",
-              "servicios/clamo-database"
-            ]
-          },
-          {
-            "group": "Pipeline de Datos",
-            "pages": [
-              "servicios/clamo-cej-connector",
-              "servicios/clamo-ingest-go",
-              "servicios/clamo-sync"
+            "tab": "Guías",
+            "groups": [
+              {
+                "group": "Integración",
+                "pages": [
+                  "es/guias/autenticacion",
+                  "es/guias/multi-tenancy",
+                  "es/guias/webhooks"
+                ]
+              },
+              {
+                "group": "Referencia",
+                "pages": [
+                  "es/guias/errores",
+                  "es/guias/mejores-practicas"
+                ]
+              }
             ]
           },
           {
-            "group": "Adicionales",
-            "pages": [
-              "servicios/clamo-mailing",
-              "servicios/clamo-dashboards",
-              "servicios/ask-clamo"
+            "tab": "Servicios",
+            "groups": [
+              {
+                "group": "Core",
+                "pages": [
+                  "es/servicios/catalogo",
+                  "es/servicios/clamo-tenant",
+                  "es/servicios/clamo-cases",
+                  "es/servicios/clamo-database"
+                ]
+              },
+              {
+                "group": "Pipeline de Datos",
+                "pages": [
+                  "es/servicios/clamo-cej-connector",
+                  "es/servicios/clamo-ingest-go",
+                  "es/servicios/clamo-sync"
+                ]
+              },
+              {
+                "group": "Adicionales",
+                "pages": [
+                  "es/servicios/clamo-mailing",
+                  "es/servicios/clamo-dashboards",
+                  "es/servicios/ask-clamo"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "API Reference",
+            "groups": [
+              {
+                "group": "Documentación API",
+                "pages": [
+                  "es/api-reference/introduccion",
+                  "es/api-reference/autenticacion",
+                  "es/api-reference/errores"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Arquitectura",
+            "groups": [
+              {
+                "group": "Diseño del Sistema",
+                "pages": [
+                  "es/arquitectura/pipeline-datos",
+                  "es/arquitectura/asistentes-ia",
+                  "es/arquitectura/analiticas",
+                  "es/arquitectura/seguridad"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Interno",
+            "groups": [
+              {
+                "group": "Desarrollo",
+                "pages": [
+                  "es/interno/entorno-desarrollo",
+                  "es/interno/depuracion",
+                  "es/interno/despliegue"
+                ]
+              }
             ]
           }
         ]
       },
       {
-        "tab": "API Reference",
-        "groups": [
+        "language": "en",
+        "tabs": [
           {
-            "group": "Documentación API",
-            "pages": [
-              "api-reference/introduccion",
-              "api-reference/autenticacion",
-              "api-reference/errores"
+            "tab": "Home",
+            "groups": [
+              {
+                "group": "Getting Started",
+                "pages": [
+                  "en/index",
+                  "en/getting-started/introduction",
+                  "en/getting-started/architecture",
+                  "en/getting-started/quickstart",
+                  "en/getting-started/local-environment"
+                ]
+              }
             ]
-          }
-        ]
-      },
-      {
-        "tab": "Arquitectura",
-        "groups": [
+          },
           {
-            "group": "Diseño del Sistema",
-            "pages": [
-              "arquitectura/pipeline-datos",
-              "arquitectura/asistentes-ia",
-              "arquitectura/analiticas",
-              "arquitectura/seguridad"
+            "tab": "Guides",
+            "groups": [
+              {
+                "group": "Integration",
+                "pages": [
+                  "en/guides/authentication",
+                  "en/guides/multi-tenancy",
+                  "en/guides/webhooks"
+                ]
+              },
+              {
+                "group": "Reference",
+                "pages": [
+                  "en/guides/errors",
+                  "en/guides/best-practices"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Services",
+            "groups": [
+              {
+                "group": "Core",
+                "pages": [
+                  "en/services/catalog",
+                  "en/services/clamo-tenant",
+                  "en/services/clamo-cases",
+                  "en/services/clamo-database"
+                ]
+              },
+              {
+                "group": "Data Pipeline",
+                "pages": [
+                  "en/services/clamo-cej-connector",
+                  "en/services/clamo-ingest-go",
+                  "en/services/clamo-sync"
+                ]
+              },
+              {
+                "group": "Additional",
+                "pages": [
+                  "en/services/clamo-mailing",
+                  "en/services/clamo-dashboards",
+                  "en/services/ask-clamo"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "API Reference",
+            "groups": [
+              {
+                "group": "API Documentation",
+                "pages": [
+                  "en/api-reference/introduccion",
+                  "en/api-reference/autenticacion",
+                  "en/api-reference/errores"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Architecture",
+            "groups": [
+              {
+                "group": "System Design",
+                "pages": [
+                  "en/architecture/pipeline-datos",
+                  "en/architecture/asistentes-ia",
+                  "en/architecture/analiticas",
+                  "en/architecture/seguridad"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Internal",
+            "groups": [
+              {
+                "group": "Development",
+                "pages": [
+                  "en/internal/development-environment",
+                  "en/internal/debugging",
+                  "en/internal/deployment"
+                ]
+              }
             ]
           }
         ]
@@ -121,4 +249,3 @@
     "thumbsRating": true
   }
 }
-

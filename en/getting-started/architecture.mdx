@@ -1,0 +1,189 @@
+---
+title: Architecture
+description: Overview of the components and services that make up the Clamo platform
+---
+
+# System Architecture
+
+Clamo is built as a distributed microservices architecture, optimized for legal data processing and multi-tenant scalability.
+
+## General Diagram
+
+```mermaid
+flowchart TB
+    subgraph Frontend [Frontend Layer]
+        WebApp[clamo-web-app<br/>Next.js 16]
+        DesktopApp[clamo-desktop-app<br/>Electron]
+        UI[clamo-ui<br/>Components]
+    end
+
+    subgraph API [API Layer]
+        Tenant[clamo-tenant<br/>Hono/TypeScript]
+        Cases[clamo-cases<br/>Hono/TypeScript]
+        Mailing[clamo-mailing<br/>React Email]
+        Dashboards[clamo-dashboards<br/>Rust/Axum]
+        Widget[clamo-widget-server<br/>TypeScript]
+    end
+
+    subgraph AI [AI Assistants]
+        AskClamo[ask-clamo<br/>LangGraph]
+        Javi[javi<br/>Cases]
+        Clamy[clamy<br/>Analytics]
+    end
+
+    subgraph Pipeline [Data Pipeline]
+        CEJ[clamo-cej-connector<br/>Python/Temporal]
+        Discovery[clamo-cej-discovery<br/>Python]
+        Ingest[clamo-ingest-go<br/>Go/Kafka]
+        Sync[clamo-sync<br/>Rust]
+    end
+
+    subgraph Storage [Storage]
+        DB[(clamo-database<br/>Neon PostgreSQL)]
+        Analytics[(clamo-clickhouse<br/>Tinybird)]
+    end
+
+    WebApp --> Tenant
+    WebApp --> Cases
+    DesktopApp --> Cases
+    Tenant --> DB
+    Cases --> DB
+    CEJ --> Ingest
+    Ingest --> DB
+    Sync --> Analytics
+    AskClamo --> Cases
+```
+
+## Components by Layer
+
+### Frontend Layer
+
+| Service | Technology | Description |
+|---------|------------|-------------|
+| `clamo-web-app` | Next.js 16, React 19 | Main web application with dashboard, case management, and onboarding |
+| `clamo-desktop-app` | Electron, TypeScript | Desktop application for offline access |
+| `clamo-ui` | React, Radix UI | Shared component library |
+
+### API Layer
+
+| Service | Technology | Port | Description |
+|---------|------------|------|-------------|
+| `clamo-tenant` | Hono, TypeScript | 4001 | Company, user, onboarding, and configuration management |
+| `clamo-cases` | Hono, TypeScript | 4000 | CRUD for cases, movements, milestones, and documents |
+| `clamo-mailing` | React Email, SendGrid | 4002 | Transactional emails and notifications |
+| `clamo-dashboards` | Rust, Axum | 8020 | Dashboard and customizable widgets API |
+| `clamo-widget-server` | TypeScript | 3005 | Embeddable widgets server |
+
+### AI Assistants
+
+| Service | Technology | Description |
+|---------|------------|-------------|
+| `ask-clamo` | LangGraph, Python | Unified agent that consolidates Javi and Clamy |
+| `javi` | LangGraph, Python | Assistant specialized in case queries |
+| `clamy` | LangGraph, Python | Analytics assistant with MCP/Tinybird integration |
+
+### Data Pipeline
+
+| Service | Technology | Description |
+|---------|------------|-------------|
+| `clamo-cej-connector` | Python, Temporal | CEJ scraping with browser automation and LLM normalization |
+| `clamo-cej-discovery` | Python | Discovery of new cases by RUC |
+| `clamo-ingest-go` | Go, Kafka | High-performance ingestion worker with batch inserts |
+| `clamo-sync` | Rust | Data synchronization to Tinybird for analytics |
+
+### Storage
+
+| Service | Technology | Description |
+|---------|------------|-------------|
+| `clamo-database` | Prisma, Neon | Schemas and migrations for multi-tenant database |
+| `clamo-clickhouse` | Tinybird | Datasources and pipes configuration for analytics |
+
+## Multi-Tenant Model
+
+Clamo implements a **database-per-tenant** model using Neon PostgreSQL:
+
+```mermaid
+flowchart LR
+    subgraph Control [Control Database - Supabase]
+        Companies[Companies]
+        Users[Users]
+        CompanyDB[CompanyDatabase]
+        Vault[Vault Secrets]
+    end
+
+    subgraph Tenants [Tenant Databases - Neon]
+        T1[(Tenant 1<br/>Branch)]
+        T2[(Tenant 2<br/>Branch)]
+        T3[(Tenant 3<br/>Branch)]
+    end
+
+    CompanyDB --> T1
+    CompanyDB --> T2
+    CompanyDB --> T3
+```
+
+### Provisioning Flow
+
+1. Admin creates a company in the admin panel
+2. `clamo-tenant` creates an Organization in WorkOS
+3. A new branch is provisioned in Neon
+4. Credentials are stored in Supabase Vault
+5. Invitation is sent to the company administrator
+
+## CEJ Data Flow
+
+```mermaid
+sequenceDiagram
+    participant S as Scheduler
+    participant CEJ as clamo-cej-connector
+    participant T as Temporal
+    participant LLM as Anthropic
+    participant K as Kafka
+    participant I as clamo-ingest-go
+    participant DB as Neon Database
+
+    S->>CEJ: Trigger job
+    CEJ->>T: Start workflow
+    T->>CEJ: Browser search (Steel)
+    CEJ->>CEJ: Parse HTML
+    CEJ->>LLM: Normalize data
+    LLM-->>CEJ: Structured payload
+    CEJ->>K: Publish CASE_READY
+    K->>I: Consume event
+    I->>DB: Batch insert (COPY)
+```
+
+## Authentication and Security
+
+- **WorkOS AuthKit**: SSO, invitations, and organization management
+- **Supabase Vault**: Secure storage of secrets and credentials
+- **Row Level Security**: Data isolation by tenant in queries
+
+## Shared Packages
+
+| Package | Description |
+|---------|-------------|
+| `@getclamo/contracts` | Shared Zod schemas and TypeScript types |
+| `@getclamo/database` | Prisma client and database utilities |
+| `@getclamo/tenant-sdk` | SDK for tenant service integration |
+| `@getclamo/cases-sdk` | SDK for cases service integration |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/en/getting-started/quickstart"
+  >
+    Start integrating with Clamo APIs.
+  </Card>
+  <Card
+    title="Services"
+    icon="server"
+    href="/en/services/catalog"
+  >
+    Detailed documentation of each service.
+  </Card>
+</CardGroup>
+

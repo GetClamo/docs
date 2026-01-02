@@ -1,0 +1,99 @@
+---
+title: Introduction
+description: What is Clamo and how can it transform your organization's legal management?
+---
+
+# What is Clamo?
+
+Clamo is a SaaS platform specialized in managing labor legal cases for the Peruvian market. Designed for law firms, corporate legal departments, and companies with high volumes of labor litigation.
+
+## The Problem
+
+Labor case management in Peru presents unique challenges:
+
+- **Manual tracking**: Lawyers must constantly check the CEJ (Electronic Justice Center) to detect movements in their cases.
+- **Scattered information**: Case data is fragmented across multiple systems and physical documents.
+- **Lack of visibility**: Legal managers don't have clear metrics on their case portfolio status.
+- **Risk of missed deadlines**: Notifications and procedural deadlines can easily be missed.
+
+## The Solution
+
+Clamo automates and centralizes the entire lifecycle of a labor case:
+
+<Steps>
+  <Step title="Automated Monitoring">
+    Intelligent CEJ scraping that detects new movements, resolutions, and notifications in real-time.
+  </Step>
+  <Step title="AI Normalization">
+    LLM processing to classify movements, identify procedural milestones, and extract key information from documents.
+  </Step>
+  <Step title="Centralized Management">
+    Unified dashboard to visualize all cases, filter by status, risk, and procedural stage.
+  </Step>
+  <Step title="Intelligent Assistants">
+    Specialized AI agents that answer questions about specific cases and generate predictive analysis.
+  </Step>
+</Steps>
+
+## Key Benefits
+
+<CardGroup cols={2}>
+  <Card title="Time Savings" icon="clock">
+    Reduce up to 80% of time spent manually reviewing the CEJ.
+  </Card>
+  <Card title="Risk Reduction" icon="shield-check">
+    Automatic alerts for critical deadlines and important movements.
+  </Card>
+  <Card title="Better Decision Making" icon="chart-pie">
+    Metrics and analytics that allow identifying patterns and optimizing strategies.
+  </Card>
+  <Card title="Scalability" icon="arrow-up-right">
+    Multi-tenant architecture that grows with your organization.
+  </Card>
+</CardGroup>
+
+## Who is Clamo For?
+
+| Profile | Use Case |
+|---------|----------|
+| **Law Firms** | Client portfolio management with multiple labor cases |
+| **Legal Departments** | Tracking company labor litigation |
+| **High Turnover Companies** | Monitoring lawsuits from former employees |
+| **Legal Consultancies** | Tracking service for multiple clients |
+
+## Data Model
+
+Clamo organizes information in a clear hierarchy:
+
+```
+Company (Tenant)
+├── Monitored Entities (RUCs)
+│   └── Cases (Files)
+│       ├── Movements
+│       ├── Procedural Milestones
+│       ├── Documents
+│       └── State Snapshots
+└── Users
+    ├── Administrators
+    └── Members
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Architecture"
+    icon="sitemap"
+    href="/en/getting-started/architecture"
+  >
+    Learn about the platform's technical components.
+  </Card>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/en/getting-started/quickstart"
+  >
+    Start integrating Clamo into your application.
+  </Card>
+</CardGroup>
+

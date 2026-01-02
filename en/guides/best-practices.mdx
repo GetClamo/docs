@@ -1,0 +1,210 @@
+---
+title: Best Practices
+description: Recommendations for robust integration with Clamo
+---
+
+# Best Practices
+
+This guide compiles best practices for integrating your application with Clamo efficiently and robustly.
+
+## Authentication
+
+### Secure Token Storage
+
+<Warning>
+**Never store tokens in localStorage or sessionStorage**. Use HttpOnly cookies for the browser.
+</Warning>
+
+```typescript
+// Correct: HttpOnly Cookie (Next.js)
+import { cookies } from 'next/headers';
+
+export async function setSession(accessToken: string, refreshToken: string) {
+  const cookieStore = cookies();
+  
+  cookieStore.set('access_token', accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 60 * 60, // 1 hour
+  });
+}
+```
+
+### Proactive Refresh
+
+Renew the token before it expires:
+
+```typescript
+class TokenManager {
+  private accessToken: string;
+  private expiresAt: number;
+  
+  async getToken(): Promise<string> {
+    // Renew if less than 5 minutes remaining
+    if (this.expiresAt - Date.now() < 5 * 60 * 1000) {
+      await this.refresh();
+    }
+    return this.accessToken;
+  }
+}
+```
+
+## API Calls
+
+### Centralize Client
+
+Use a centralized client for all calls:
+
+```typescript
+class ClamoClient {
+  private baseUrl = process.env.CLAMO_API_URL;
+  
+  cases = {
+    list: (params?: CaseListParams) => 
+      this.request<CaseListResponse>('GET', `/v1/cases?${new URLSearchParams(params)}`),
+    get: (id: string) => 
+      this.request<Case>('GET', `/v1/cases/${id}`),
+  };
+}
+
+export const clamo = new ClamoClient();
+```
+
+### Avoid N+1 Queries
+
+Instead of making multiple calls, use list endpoints:
+
+```typescript
+// Incorrect: N+1 queries
+const cases = await Promise.all(
+  caseIds.map(id => clamo.cases.get(id))
+);
+
+// Correct: Single call with filter
+const { data: cases } = await clamo.cases.list({
+  ids: caseIds.join(','),
+});
+```
+
+### Efficient Pagination
+
+For large datasets, paginate correctly:
+
+```typescript
+async function* getAllCases(): AsyncGenerator<Case> {
+  let page = 1;
+  let hasMore = true;
+  
+  while (hasMore) {
+    const { data, pagination } = await clamo.cases.list({
+      page: page.toString(),
+      limit: '100',
+    });
+    
+    for (const caso of data) {
+      yield caso;
+    }
+    
+    hasMore = page < pagination.totalPages;
+    page++;
+  }
+}
+```
+
+## Cache
+
+### Static Data Cache
+
+Cache data that changes infrequently:
+
+```typescript
+import { unstable_cache } from 'next/cache';
+
+const getStages = unstable_cache(
+  async () => clamo.request('GET', '/v1/taxonomy/stages'),
+  ['taxonomy-stages'],
+  { revalidate: 3600 }
+);
+```
+
+## Webhooks
+
+### Idempotency
+
+Ensure processing the same webhook multiple times doesn't cause problems:
+
+```typescript
+async function handleWebhook(event: WebhookEvent) {
+  const existing = await db.processedWebhooks.findUnique({
+    where: { eventId: event.id },
+  });
+  
+  if (existing) return;
+  
+  await processEvent(event);
+  
+  await db.processedWebhooks.create({
+    data: { eventId: event.id, processedAt: new Date() },
+  });
+}
+```
+
+## Security
+
+### Input Validation
+
+Validate data before sending to the API:
+
+```typescript
+import { z } from 'zod';
+
+const UpdateCaseSchema = z.object({
+  riskLevel: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
+  claimAmount: z.number().positive().optional(),
+});
+
+async function updateCase(id: string, data: unknown) {
+  const validated = UpdateCaseSchema.parse(data);
+  return clamo.cases.update(id, validated);
+}
+```
+
+## Integration Checklist
+
+<Steps>
+  <Step title="Authentication">
+    - Tokens stored securely
+    - Automatic refresh implemented
+    - Logout clears all tokens
+  </Step>
+  
+  <Step title="API">
+    - Centralized client
+    - Robust error handling
+    - Client-side rate limiting
+    - Retry with exponential backoff
+  </Step>
+  
+  <Step title="Webhooks">
+    - Signature verification
+    - Idempotent processing
+    - Asynchronous processing
+    - Delivery logging
+  </Step>
+  
+  <Step title="Security">
+    - Input validation
+    - Log sanitization
+    - HTTPS in production
+    - Tokens not exposed in frontend
+  </Step>
+  
+  <Step title="Monitoring">
+    - Latency metrics
+    - Error alerts
+    - Structured logs
+    - Distributed tracing
+  </Step>
+</Steps>
+

@@ -1,0 +1,224 @@
+---
+title: Deployment
+description: Deployment procedures guide for Clamo services
+---
+
+# Deployment Guide
+
+This guide documents deployment procedures for the different Clamo services.
+
+## Environments
+
+| Environment | Purpose | Base URL |
+|-------------|---------|----------|
+| Development | Local development | localhost:* |
+| Staging | Testing and QA | staging.getclamo.com |
+| Production | Production | app.getclamo.com |
+
+## CI/CD Pipeline
+
+### GitHub Actions
+
+All repositories use GitHub Actions for CI/CD:
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install
+      - run: pnpm test
+      - run: pnpm build
+
+  deploy-staging:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Deploy steps...
+```
+
+### Deployment Flow
+
+```mermaid
+flowchart LR
+    PR[Pull Request] --> Tests[Run Tests]
+    Tests --> Review[Code Review]
+    Review --> Merge[Merge to main]
+    Merge --> Staging[Deploy Staging]
+    Staging --> QA[QA Testing]
+    QA --> Prod[Deploy Production]
+```
+
+## Deployment by Service
+
+### Frontend (clamo-web-app)
+
+**Platform**: Vercel
+
+```bash
+# Manual deploy to staging
+vercel --env staging
+
+# Deploy to production
+vercel --prod
+```
+
+### TypeScript APIs (clamo-tenant, clamo-cases)
+
+**Platform**: Railway / Fly.io
+
+```bash
+# Deploy with Railway CLI
+railway up
+
+# Deploy with Fly.io
+fly deploy
+```
+
+## Database Migrations
+
+### Migration Process
+
+<Warning>
+Database migrations must be run **before** deploying new code.
+</Warning>
+
+```bash
+# 1. Verify current status
+clamo db status stg
+
+# 2. Run migrations on staging
+clamo db migrate stg
+
+# 3. Verify everything works
+# ... manual testing ...
+
+# 4. Run on production
+clamo db migrate prd
+```
+
+## Rollback
+
+### Code Rollback
+
+```bash
+# Vercel (frontend)
+vercel rollback
+
+# Railway
+railway rollback
+
+# Kubernetes
+kubectl rollout undo deployment/clamo-tenant
+```
+
+### Database Rollback
+
+<Warning>
+Database rollbacks can cause data loss. Always backup before.
+</Warning>
+
+```bash
+# With Prisma
+npx prisma migrate resolve --rolled-back "migration_name"
+
+# With Neon (point-in-time recovery)
+neon branches create --name recovery --parent main --point-in-time "2025-01-01T00:00:00Z"
+```
+
+## Health Checks
+
+### Health Endpoints
+
+All services expose:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/health` | General status |
+| `/health/live` | Liveness (service running) |
+| `/health/ready` | Readiness (ready for traffic) |
+
+### Post-Deploy Verification
+
+```bash
+#!/bin/bash
+# verify-deploy.sh
+
+SERVICES=(
+  "https://api.getclamo.com/health"
+  "https://tenant.getclamo.com/health"
+)
+
+for service in "${SERVICES[@]}"; do
+  status=$(curl -s -o /dev/null -w "%{http_code}" $service)
+  if [ $status -eq 200 ]; then
+    echo "✓ $service is healthy"
+  else
+    echo "✗ $service returned $status"
+    exit 1
+  fi
+done
+
+echo "All services healthy!"
+```
+
+## Deployment Checklist
+
+### Pre-Deploy
+
+- [ ] Tests passing in CI
+- [ ] Code review approved
+- [ ] DB migrations executed
+- [ ] Environment variables updated
+- [ ] Documentation updated
+
+### Deploy
+
+- [ ] Staging deploy successful
+- [ ] QA testing completed
+- [ ] Production deploy
+- [ ] Health checks passing
+
+### Post-Deploy
+
+- [ ] Monitor metrics for 30min
+- [ ] Check error logs
+- [ ] Notify team
+- [ ] Update changelog
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Development Environment"
+    icon="laptop-code"
+    href="/en/internal/development-environment"
+  >
+    Local environment setup.
+  </Card>
+  <Card
+    title="Debugging"
+    icon="bug"
+    href="/en/internal/debugging"
+  >
+    Troubleshooting guide.
+  </Card>
+</CardGroup>
+

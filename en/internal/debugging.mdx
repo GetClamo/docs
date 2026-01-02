@@ -1,0 +1,183 @@
+---
+title: Debugging
+description: Troubleshooting and debugging guide for Clamo services
+---
+
+# Debugging Guide
+
+This guide provides techniques and tools for debugging the different Clamo services.
+
+## Logs by Service
+
+### Log Locations
+
+| Service | Location | Format |
+|---------|----------|--------|
+| clamo-web-app | Terminal / Browser Console | JSON |
+| clamo-tenant | Terminal stdout | JSON |
+| clamo-cases | Terminal stdout | JSON |
+| clamo-cej-connector | Docker logs / Temporal UI | JSON |
+| clamo-ingest-go | Docker logs | Structured |
+| Temporal | http://localhost:8233 | Web UI |
+
+### View Logs in Real-Time
+
+```bash
+# TypeScript services (development)
+cd clamo-tenant && pnpm dev
+
+# Docker services
+docker logs -f clamo-cej-connector
+
+# All Docker services
+docker-compose logs -f
+
+# Filter by level
+docker logs clamo-cej-connector 2>&1 | grep ERROR
+```
+
+## Database Debugging
+
+### Prisma Studio
+
+```bash
+# Control database
+cd clamo-database
+npx prisma studio --schema=prisma/control/schema.prisma
+
+# Tenant database (requires connection string)
+DATABASE_URL="postgresql://..." npx prisma studio --schema=prisma/tenant/schema.prisma
+```
+
+### Direct Queries with psql
+
+```bash
+# Connect to control DB
+psql $CONTROL_DATABASE_URL
+
+# Useful queries
+SELECT * FROM "Company" ORDER BY "createdAt" DESC LIMIT 10;
+SELECT * FROM "User" WHERE "companyId" = 'cmp_xxx';
+SELECT * FROM "CompanyDatabase" WHERE status = 'active';
+```
+
+## API Debugging
+
+### cURL Examples
+
+```bash
+# Health check
+curl http://localhost:4001/health | jq
+
+# Get current user
+curl http://localhost:4001/v1/me \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "x-clamo-session: $SESSION" | jq
+
+# List cases
+curl "http://localhost:4000/v1/cases?limit=5" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "x-clamo-session: $SESSION" | jq
+```
+
+## Temporal Workflow Debugging
+
+### Temporal Web UI
+
+Access http://localhost:8233 to:
+- View running workflows
+- Inspect event history
+- Restart failed workflows
+- View metrics
+
+### Temporal CLI
+
+```bash
+# List workflows
+temporal workflow list --namespace clamo-cej
+
+# View workflow detail
+temporal workflow show --workflow-id extract-ruc-20123456789
+
+# Terminate workflow
+temporal workflow terminate --workflow-id extract-ruc-20123456789
+```
+
+## Common Errors
+
+### UNAUTHORIZED (401)
+
+**Symptoms**: API returns 401 on all requests.
+
+**Causes and Solutions**:
+
+```bash
+# 1. Token expired - regenerate
+# In your app, implement automatic refresh
+
+# 2. Malformed session token
+# Verify it's in base64url
+echo $SESSION | base64 -d
+
+# 3. User doesn't exist in Clamo
+# Verify in DB
+psql $CONTROL_DATABASE_URL -c "SELECT * FROM \"User\" WHERE email = 'user@example.com'"
+```
+
+### COMPANY_NOT_READY (422)
+
+**Symptoms**: Cannot access tenant data.
+
+**Diagnosis**:
+
+```sql
+SELECT 
+  c.id,
+  c."databaseStatus",
+  cd.status,
+  cd."neonBranchId"
+FROM "Company" c
+LEFT JOIN "CompanyDatabase" cd ON c.id = cd."companyId"
+WHERE c.id = 'cmp_xxx';
+```
+
+### Connection Refused
+
+**Symptoms**: Cannot connect to a service.
+
+**Checklist**:
+
+```bash
+# 1. Verify service is running
+docker ps | grep clamo
+pgrep -f "clamo-tenant"
+
+# 2. Verify port
+lsof -i :4001
+
+# 3. Check logs
+docker logs clamo-tenant --tail 50
+
+# 4. Verify environment variables
+env | grep DATABASE_URL
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Development Environment"
+    icon="laptop-code"
+    href="/en/internal/development-environment"
+  >
+    Local environment setup.
+  </Card>
+  <Card
+    title="Deployment"
+    icon="rocket"
+    href="/en/internal/deployment"
+  >
+    Deployment procedures.
+  </Card>
+</CardGroup>
+

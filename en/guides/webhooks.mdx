@@ -1,0 +1,217 @@
+---
+title: Webhooks
+description: Receive real-time notifications of events in Clamo
+---
+
+# Webhooks
+
+Webhooks allow your application to receive notifications when important events occur in Clamo.
+
+## Available Events
+
+| Event | Description |
+|-------|-------------|
+| `case.created` | New case detected |
+| `case.updated` | Case updated |
+| `case.status_changed` | Case status change |
+| `movement.created` | New procedural movement |
+| `movement.notification` | Movement with notification |
+| `milestone.achieved` | Procedural milestone achieved |
+| `risk.elevated` | Risk level increased |
+
+## Configuration
+
+### Register Webhook
+
+```bash
+curl -X POST https://api.clamo.dev/v1/webhooks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "x-clamo-session: $SESSION" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-app.com/webhooks/clamo",
+    "events": ["case.created", "movement.created", "risk.elevated"],
+    "secret": "whsec_your_secure_secret"
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "wh_abc123",
+  "url": "https://your-app.com/webhooks/clamo",
+  "events": ["case.created", "movement.created", "risk.elevated"],
+  "status": "active",
+  "createdAt": "2025-01-02T12:00:00Z"
+}
+```
+
+## Payload Format
+
+All webhooks follow this format:
+
+```json
+{
+  "id": "evt_xyz789",
+  "type": "movement.created",
+  "timestamp": "2025-01-02T12:00:00Z",
+  "data": {
+    // Event-specific data
+  },
+  "metadata": {
+    "companyId": "cmp_abc123",
+    "webhookId": "wh_abc123"
+  }
+}
+```
+
+## Event Examples
+
+### case.created
+
+```json
+{
+  "id": "evt_001",
+  "type": "case.created",
+  "timestamp": "2025-01-02T12:00:00Z",
+  "data": {
+    "case": {
+      "id": "case_abc123",
+      "expediente": "00001-2024-0-1234-JR-LA-01",
+      "plaintiff": "John Doe",
+      "defendant": "Company S.A.C.",
+      "subjectMatter": "Wrongful termination",
+      "riskLevel": "MEDIUM",
+      "status": "EN_TRAMITE",
+      "filingDate": "2024-01-15"
+    }
+  }
+}
+```
+
+### movement.created
+
+```json
+{
+  "id": "evt_002",
+  "type": "movement.created",
+  "timestamp": "2025-01-02T14:30:00Z",
+  "data": {
+    "movement": {
+      "id": "mov_xyz789",
+      "date": "2025-01-02",
+      "description": "RESOLUTION N° 15: Answer to complaint accepted",
+      "classification": "RESOLUCION",
+      "isNotification": false
+    },
+    "case": {
+      "id": "case_abc123",
+      "expediente": "00001-2024-0-1234-JR-LA-01"
+    }
+  }
+}
+```
+
+## Signature Verification
+
+Clamo signs all webhooks with HMAC-SHA256. Verify the signature before processing:
+
+### Signature Header
+
+```
+X-Clamo-Signature: sha256=abc123...
+X-Clamo-Timestamp: 1704200000
+```
+
+### Node.js Verification
+
+```typescript
+import crypto from 'crypto';
+
+function verifyWebhookSignature(
+  payload: string,
+  signature: string,
+  timestamp: string,
+  secret: string
+): boolean {
+  // Verify timestamp is not too old (prevents replay attacks)
+  const timestampMs = parseInt(timestamp) * 1000;
+  const now = Date.now();
+  if (now - timestampMs > 5 * 60 * 1000) { // 5 minutes
+    return false;
+  }
+  
+  // Calculate expected signature
+  const signedPayload = `${timestamp}.${payload}`;
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(signedPayload)
+    .digest('hex');
+  
+  // Secure comparison
+  const providedSig = signature.replace('sha256=', '');
+  return crypto.timingSafeEqual(
+    Buffer.from(expectedSignature),
+    Buffer.from(providedSig)
+  );
+}
+```
+
+## Retries
+
+Clamo retries failed webhooks with exponential backoff:
+
+| Attempt | Delay |
+|---------|-------|
+| 1 | Immediate |
+| 2 | 1 minute |
+| 3 | 5 minutes |
+| 4 | 30 minutes |
+| 5 | 2 hours |
+
+A webhook is considered failed if:
+- Responds with code >= 400
+- Doesn't respond within 30 seconds
+- Connection error
+
+## Best Practices
+
+<Warning>
+**Idempotency**: Your endpoint must be idempotent. Clamo may send the same event more than once in case of retries. Use the event `id` to detect duplicates.
+</Warning>
+
+### Asynchronous Processing
+
+```typescript
+// Respond quickly and process in background
+app.post('/webhooks/clamo', async (req, res) => {
+  // Verify signature...
+  
+  // Queue for processing
+  await queue.add('process-webhook', event);
+  
+  // Respond immediately
+  res.json({ received: true });
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Errors"
+    icon="triangle-exclamation"
+    href="/en/guides/errors"
+  >
+    Common error handling.
+  </Card>
+  <Card
+    title="Best Practices"
+    icon="lightbulb"
+    href="/en/guides/best-practices"
+  >
+    Integration recommendations.
+  </Card>
+</CardGroup>
+

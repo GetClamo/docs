@@ -1,0 +1,94 @@
+---
+title: Welcome to Clamo
+description: Legal case management platform for the Peruvian labor market
+---
+
+<img
+  className="block dark:hidden"
+  src="/logo/light.svg"
+  alt="Clamo Logo"
+  style={{ height: '60px', marginBottom: '20px' }}
+/>
+<img
+  className="hidden dark:block"
+  src="/logo/dark.svg"
+  alt="Clamo Logo"
+  style={{ height: '60px', marginBottom: '20px' }}
+/>
+
+# Legal Management Platform
+
+Clamo is a multi-tenant SaaS platform designed for comprehensive management of labor legal cases in Peru. It automates judicial case tracking, integrates specialized AI assistants, and provides real-time analytics.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Automated Tracking" icon="radar">
+    Automatic monitoring of CEJ (Electronic Justice Center) cases with real-time updates.
+  </Card>
+  <Card title="Multi-Tenancy" icon="building">
+    Database-per-tenant architecture with Neon PostgreSQL for complete data isolation.
+  </Card>
+  <Card title="AI Assistants" icon="robot">
+    Specialized agents with LangGraph for case queries and predictive analysis.
+  </Card>
+  <Card title="Advanced Analytics" icon="chart-line">
+    Real-time dashboards and metrics with Tinybird and ClickHouse.
+  </Card>
+</CardGroup>
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card
+    title="Introduction"
+    icon="book-open"
+    href="/en/getting-started/introduction"
+  >
+    Learn what Clamo is and how it can help your legal team.
+  </Card>
+  <Card
+    title="Architecture"
+    icon="sitemap"
+    href="/en/getting-started/architecture"
+  >
+    Explore the technical architecture and system components.
+  </Card>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/en/getting-started/quickstart"
+  >
+    Integrate Clamo into your application in less than 5 minutes.
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/en/api-reference/introduction"
+  >
+    Complete documentation of available endpoints.
+  </Card>
+</CardGroup>
+
+## Technology Stack
+
+| Layer | Technologies |
+|-------|--------------|
+| **Frontend** | Next.js 16, React 19, TypeScript |
+| **APIs** | Hono, Rust/Axum |
+| **Database** | Neon PostgreSQL, Prisma ORM |
+| **Analytics** | Tinybird, ClickHouse |
+| **AI** | LangGraph, LangChain, Anthropic |
+| **Authentication** | WorkOS AuthKit |
+| **Messaging** | Kafka, Temporal |
+
+## Support
+
+<Card
+  title="GitHub"
+  icon="github"
+  href="https://github.com/GetClamo"
+>
+  Platform repositories and source code.
+</Card>
+
