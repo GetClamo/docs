@@ -5,7 +5,7 @@ description: Complete guide for handling errors in Clamo integration
 
 # Error Handling
 
-This guide provides strategies for handling different types of errors that can occur when integrating with Clamo APIs.
+This guide provides strategies for handling the different types of errors that can occur when integrating with Clamo APIs.
 
 ## Error Categories
 
@@ -19,7 +19,7 @@ Server-side errors. Can be retried with exponential backoff.
 
 ### Network Errors
 
-Timeouts, connection refused, etc. Can be retried.
+Timeouts, refused connections, etc. Can be retried.
 
 ## Handling Strategy
 
@@ -32,7 +32,7 @@ flowchart TD
     
     C -->|401| E[Refresh Token]
     C -->|403| F[Check Permissions]
-    C -->|404| G[Check Resource]
+    C -->|404| G[Verify Resource]
     C -->|422| H[Business Error]
     C -->|429| I[Rate Limit - Wait]
     
@@ -83,18 +83,24 @@ class ClamoClient {
         
         const error = await response.json();
         
+        // Handle based on error code
         switch (response.status) {
           case 401:
             if (error.error.code === 'TOKEN_EXPIRED') {
               await this.refreshToken();
-              continue;
+              continue; // Retry
             }
-            throw new ClamoApiError(error.error.code, error.error.message, error.error.details, 401);
+            throw new ClamoApiError(
+              error.error.code,
+              error.error.message,
+              error.error.details,
+              401
+            );
             
           case 429:
             const retryAfter = error.error.details?.retryAfter || 60;
             await this.sleep(retryAfter * 1000);
-            continue;
+            continue; // Retry
             
           case 500:
           case 502:
@@ -102,13 +108,22 @@ class ClamoClient {
           case 504:
             const backoff = Math.pow(2, attempt) * 1000;
             await this.sleep(backoff);
-            continue;
+            continue; // Retry
             
           default:
-            throw new ClamoApiError(error.error.code, error.error.message, error.error.details, response.status);
+            throw new ClamoApiError(
+              error.error.code,
+              error.error.message,
+              error.error.details,
+              response.status
+            );
         }
       } catch (error) {
-        if (error instanceof ClamoApiError) throw error;
+        if (error instanceof ClamoApiError) {
+          throw error;
+        }
+        
+        // Network error
         lastError = error as Error;
         const backoff = Math.pow(2, attempt) * 1000;
         await this.sleep(backoff);
@@ -116,6 +131,39 @@ class ClamoClient {
     }
     
     throw lastError!;
+  }
+  
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+```
+
+### Client Usage
+
+```typescript
+const client = new ClamoClient();
+
+try {
+  const cases = await client.request('GET', '/v1/cases');
+  console.log('Cases:', cases);
+} catch (error) {
+  if (error instanceof ClamoApiError) {
+    switch (error.code) {
+      case 'VALIDATION_ERROR':
+        console.error('Validation error:', error.details);
+        break;
+      case 'NOT_FOUND':
+        console.error('Resource not found');
+        break;
+      case 'FORBIDDEN':
+        console.error('No permissions');
+        break;
+      default:
+        console.error('API error:', error.message);
+    }
+  } else {
+    console.error('Unexpected error:', error);
   }
 }
 ```
@@ -127,6 +175,7 @@ class ClamoClient {
 **Cause**: Missing, invalid, or expired token.
 
 ```typescript
+// Solution: Verify and refresh token
 if (error.code === 'UNAUTHORIZED' || error.code === 'TOKEN_EXPIRED') {
   const newToken = await refreshAccessToken();
   // Retry with new token
@@ -138,6 +187,7 @@ if (error.code === 'UNAUTHORIZED' || error.code === 'TOKEN_EXPIRED') {
 **Cause**: User doesn't have permissions for the action.
 
 ```typescript
+// Solution: Check user role
 if (error.code === 'FORBIDDEN') {
   const user = await client.getMe();
   if (user.role !== 'admin') {
@@ -151,9 +201,52 @@ if (error.code === 'FORBIDDEN') {
 **Cause**: Resource doesn't exist or was deleted.
 
 ```typescript
+// Solution: Handle gracefully
 if (error.code === 'NOT_FOUND') {
+  // Clear local cache if exists
   cache.delete(resourceId);
+  // Redirect or show message
   showNotFound('The requested case does not exist');
+}
+```
+
+### VALIDATION_ERROR (400)
+
+**Cause**: Invalid data in the request.
+
+```typescript
+// Solution: Show specific errors to user
+if (error.code === 'VALIDATION_ERROR') {
+  const errors = error.details?.errors || [];
+  
+  errors.forEach(err => {
+    // Mark field with error
+    setFieldError(err.field, err.message);
+  });
+}
+```
+
+### COMPANY_NOT_READY (422)
+
+**Cause**: Tenant database is not ready.
+
+```typescript
+// Solution: Poll until ready
+if (error.code === 'COMPANY_NOT_READY') {
+  const checkStatus = async () => {
+    const company = await client.getMyCompany();
+    if (company.databaseStatus === 'ready') {
+      // Continue
+      return true;
+    }
+    if (company.databaseStatus === 'failed') {
+      throw new Error('Provisioning failed');
+    }
+    // Keep waiting
+    return false;
+  };
+  
+  await pollUntil(checkStatus, { interval: 5000, timeout: 60000 });
 }
 ```
 
@@ -162,22 +255,137 @@ if (error.code === 'NOT_FOUND') {
 **Cause**: Too many requests in a short time.
 
 ```typescript
+// Solution: Implement client-side rate limiting
 class RateLimiter {
   private requests: number[] = [];
   private limit: number;
   private window: number;
+  
+  constructor(limit: number, windowMs: number) {
+    this.limit = limit;
+    this.window = windowMs;
+  }
   
   async acquire(): Promise<void> {
     const now = Date.now();
     this.requests = this.requests.filter(t => now - t < this.window);
     
     if (this.requests.length >= this.limit) {
-      const waitTime = this.window - (now - this.requests[0]);
+      const oldestRequest = this.requests[0];
+      const waitTime = this.window - (now - oldestRequest);
       await new Promise(r => setTimeout(r, waitTime));
     }
     
     this.requests.push(Date.now());
   }
+}
+
+const rateLimiter = new RateLimiter(100, 60000); // 100 req/min
+
+async function makeRequest() {
+  await rateLimiter.acquire();
+  return client.request('GET', '/v1/cases');
+}
+```
+
+## Error Logging
+
+```typescript
+function logError(error: ClamoApiError, context: Record<string, unknown>) {
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    errorCode: error.code,
+    errorMessage: error.message,
+    statusCode: error.statusCode,
+    details: error.details,
+    context,
+  };
+  
+  // Structured log
+  console.error(JSON.stringify(logEntry));
+  
+  // Send to monitoring service
+  if (error.statusCode && error.statusCode >= 500) {
+    sendToSentry(error, context);
+  }
+}
+```
+
+## User Notification
+
+```typescript
+function showErrorToUser(error: ClamoApiError) {
+  const userMessages: Record<string, string> = {
+    'UNAUTHORIZED': 'Your session has expired. Please log in again.',
+    'FORBIDDEN': 'You do not have permission to perform this action.',
+    'NOT_FOUND': 'The requested resource does not exist.',
+    'VALIDATION_ERROR': 'Please review the entered data.',
+    'RATE_LIMIT_EXCEEDED': 'Too many requests. Wait a moment and try again.',
+    'COMPANY_NOT_READY': 'Your account is being configured. Try again in a few minutes.',
+    'INTERNAL_ERROR': 'An error occurred. Our team has been notified.',
+  };
+  
+  const message = userMessages[error.code] || 'An unexpected error occurred.';
+  
+  toast.error(message);
+}
+```
+
+## Circuit Breaker
+
+To protect your application from error cascades:
+
+```typescript
+class CircuitBreaker {
+  private failures = 0;
+  private lastFailure: number = 0;
+  private state: 'closed' | 'open' | 'half-open' = 'closed';
+  
+  constructor(
+    private threshold: number = 5,
+    private resetTimeout: number = 30000
+  ) {}
+  
+  async execute<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.state === 'open') {
+      if (Date.now() - this.lastFailure > this.resetTimeout) {
+        this.state = 'half-open';
+      } else {
+        throw new Error('Circuit breaker is open');
+      }
+    }
+    
+    try {
+      const result = await fn();
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+  
+  private onSuccess() {
+    this.failures = 0;
+    this.state = 'closed';
+  }
+  
+  private onFailure() {
+    this.failures++;
+    this.lastFailure = Date.now();
+    
+    if (this.failures >= this.threshold) {
+      this.state = 'open';
+    }
+  }
+}
+
+const circuitBreaker = new CircuitBreaker();
+
+async function safeFetch() {
+  return circuitBreaker.execute(() => 
+    client.request('GET', '/v1/cases')
+  );
 }
 ```
 
@@ -189,7 +397,7 @@ class RateLimiter {
     icon="lightbulb"
     href="/en/guides/best-practices"
   >
-    Recommendations for robust integration.
+    Recommendations for a robust integration.
   </Card>
   <Card
     title="API Reference"
@@ -199,4 +407,3 @@ class RateLimiter {
     Technical error documentation.
   </Card>
 </CardGroup>
-

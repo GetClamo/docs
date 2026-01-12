@@ -5,430 +5,216 @@ description: Arquitectura de los agentes LangGraph para consultas y análisis
 
 # Asistentes IA
 
-Clamo integra asistentes de IA especializados construidos con LangGraph para proporcionar consultas inteligentes sobre casos y análisis predictivo.
+Clamo integra asistentes de IA especializados construidos con LangGraph Platform. Los tres asistentes están consolidados en un único despliegue llamado **ask-clamo**.
 
-## Arquitectura General
+## Visión General de la Arquitectura
 
 ```mermaid
 flowchart TB
-    subgraph Frontend [Aplicación]
-        Chat[Chat Interface]
-        Dashboard[Dashboard]
+    subgraph LangGraph [LangGraph Platform]
+        subgraph AskClamo [ask-clamo graph]
+            Javi[Javi Assistant<br/>tool_profile = JAVI]
+            Clamy[Clamy Assistant<br/>tool_profile = CLAMY]
+            Luna[Luna Assistant<br/>tool_profile = LUNA]
+        end
+        
+        SharedThreads[(Threads Compartidos)]
     end
     
-    subgraph Gateway [ask-clamo]
-        Router[Intent Router]
-        Context[Context Manager]
+    subgraph Tools [Conjuntos de Herramientas]
+        CaseTools[Case Tools<br/>page-scoped]
+        ChartTools[Chart Tools<br/>+ MCP Tools]
+        GlobalTools[Global Tools<br/>+ Chart Tools]
     end
     
-    subgraph Agents [Agentes Especializados]
-        Javi[Javi<br/>Consultas de Casos]
-        Clamy[Clamy<br/>Analytics]
-    end
+    Javi --> CaseTools
+    Clamy --> ChartTools
+    Luna --> GlobalTools
     
-    subgraph Tools [Herramientas]
-        CasesAPI[Cases API]
-        TinybirdAPI[Tinybird API]
-        SearchTool[Vector Search]
-    end
-    
-    subgraph LLM [Modelos]
-        Claude[Claude 3.5 Sonnet]
-    end
-    
-    Chat --> Router
-    Dashboard --> Router
-    Router --> Javi
-    Router --> Clamy
-    Javi --> CasesAPI
-    Javi --> SearchTool
-    Clamy --> TinybirdAPI
-    Javi --> Claude
-    Clamy --> Claude
+    Javi --> SharedThreads
+    Clamy --> SharedThreads
+    Luna --> SharedThreads
 ```
 
-## Agentes
+## Características Clave
 
-### Javi - Asistente de Casos
+| Característica | Descripción |
+|----------------|-------------|
+| **Despliegue Único** | Un solo grafo sirve a los tres asistentes |
+| **Threads Compartidos** | Javi, Clamy y Luna comparten historial de mensajes en el mismo thread |
+| **Aislamiento de Herramientas** | Cada asistente solo ve sus herramientas designadas vía middleware + guard |
+| **Prompts Dinámicos** | Los system prompts se seleccionan según `assistant_name` en el contexto |
+| **Integración MCP** | Clamy carga herramientas de analytics de Tinybird vía protocolo MCP |
+| **Acceso Global** | Luna puede consultar cualquier caso sin contexto de página |
 
-Especializado en consultas sobre expedientes judiciales específicos.
+## Los Tres Asistentes
 
-| Propiedad | Valor |
-|-----------|-------|
-| **Repositorio** | `GetClamo/javi` |
-| **Framework** | LangGraph |
-| **Modelo** | Claude 3.5 Sonnet |
-| **Puerto** | 8123 |
+### Javi (Asistente de Casos)
 
-#### Capacidades
+Javi es el asistente de casos con alcance de página, embebido en las páginas de detalle de casos. Ayuda a los usuarios a entender casos legales individuales.
 
-- Buscar casos por criterios
-- Explicar movimientos procesales
-- Resumir estado actual de un caso
-- Identificar próximos pasos probables
-- Comparar casos similares
+**Capacidades:**
+- Explicar el estado actual del caso y nivel de riesgo
+- Detallar montos demandados y exposición financiera
+- Resumir movimientos recientes del caso
+- Explicar etapas procesales y próximos pasos
 
-#### Grafo de Estados
+**Herramientas:**
+- `get_case_details` - Información completa del caso (partes, monto, riesgo, estado)
+- `get_case_progress` - Línea de tiempo del proceso por etapas
+- `get_case_movements` - Acciones/movimientos del expediente
+- `get_case_milestones` - Hitos importantes alcanzados
+
+**Contexto Requerido:**
+- `case_id` - El caso específico que se está viendo
+- `company_id` - Identificador del tenant
+- `access_token` - Autenticación del usuario
+
+### Clamy (Asistente de Analytics)
+
+Clamy es el asistente de analytics que genera gráficos y visualizaciones para insights del portafolio legal.
+
+**Capacidades:**
+- Generar gráficos interactivos y KPIs
+- Consultar endpoints de analytics de Tinybird vía MCP
+- Crear visualizaciones personalizadas
+- Proporcionar insights a nivel de portafolio
+
+**Herramientas:**
+- `show_chart` - Mostrar tipos de gráficos predefinidos
+- `show_kpi` - Mostrar indicadores clave de rendimiento
+- `show_custom_chart` - Generación de visualización personalizada
+- `get_chart_template` - Obtener plantillas de configuración de gráficos
+- Herramientas MCP de Tinybird (cargadas dinámicamente)
+
+**Contexto Requerido:**
+- `company_id` - Identificador del tenant
+- `case_id` - Opcional, para analytics específicos del caso
+
+### Luna (Asistente Global)
+
+Luna es el asistente generalista con acceso a TODOS los casos, sin limitarse a un contexto de página único.
+
+**Capacidades:**
+- Consultar cualquier caso en el portafolio
+- Análisis y comparaciones entre casos
+- Vista general del portafolio y búsqueda
+- Estadísticas y tendencias globales
+
+**Herramientas:**
+- `get_case_details_by_id` - Detalles del caso con case_id como argumento
+- `get_case_progress_by_id` - Progreso con case_id como argumento
+- `get_case_movements_by_id` - Movimientos con case_id como argumento
+- `get_case_milestones_by_id` - Hitos con case_id como argumento
+- `search_cases` - Búsqueda en todos los casos
+- `list_cases` - Listar casos con filtros
+- Más todas las herramientas de gráficos de Clamy
+
+**Contexto Requerido:**
+- `company_id` - Identificador del tenant
+- `access_token` - Autenticación del usuario
+- `case_id` - NO requerido (se pasa como argumento de herramienta)
+
+**Whitelist de Herramientas MCP:**
+Luna tiene acceso a un conjunto curado de herramientas MCP seguras:
+- `api_estadisticas` - KPIs globales
+- `api_por_zona` - Distribución geográfica
+- `api_expedientes` - Listado de casos filtrado
+- `api_buscar` - Búsqueda de texto
+- `api_estados_caso` - Distribución por estado
+- `api_casos_atencion` - Casos críticos
+- `api_cases_trends` - Tendencias temporales
+- `api_cases_distribution` - Distribución dimensional
+
+## Arquitectura de Aislamiento de Herramientas
 
 ```mermaid
-stateDiagram-v2
-    [*] --> ParseQuery
-    ParseQuery --> NeedsContext: Requires case data
-    ParseQuery --> DirectAnswer: Can answer directly
-    NeedsContext --> FetchCases
-    FetchCases --> Analyze
-    Analyze --> GenerateResponse
-    DirectAnswer --> GenerateResponse
-    GenerateResponse --> [*]
+flowchart LR
+    subgraph Request [Request Entrante]
+        Context[AppContext<br/>assistant_name]
+    end
+    
+    subgraph Middleware [Agent Middleware]
+        ProfileSelect[Seleccionar Tool Profile]
+        ToolFilter[Filtrar Herramientas Disponibles]
+        Guard[Tool Guard]
+    end
+    
+    subgraph Profiles [Tool Profiles]
+        JAVI[JAVI Profile<br/>case_tools]
+        CLAMY[CLAMY Profile<br/>chart_tools + MCP]
+        LUNA[LUNA Profile<br/>global_tools + charts]
+    end
+    
+    Context --> ProfileSelect
+    ProfileSelect --> ToolFilter
+    ToolFilter --> Guard
+    
+    ProfileSelect -.-> JAVI
+    ProfileSelect -.-> CLAMY
+    ProfileSelect -.-> LUNA
 ```
 
-#### Implementación
+El middleware asegura:
+1. El tool profile se selecciona basado en `assistant_name` en el contexto
+2. Solo las herramientas del profile seleccionado se exponen al LLM
+3. Un guard previene la ejecución de herramientas que no están en el profile
 
-```python
-from langgraph.graph import StateGraph, END
-from langchain_anthropic import ChatAnthropic
+## Estructura del Proyecto
 
-class JaviState(TypedDict):
-    messages: list[BaseMessage]
-    cases: list[dict]
-    context: str
-    response: str
-
-def create_javi_graph():
-    graph = StateGraph(JaviState)
-    
-    # Nodos
-    graph.add_node("parse_query", parse_query)
-    graph.add_node("fetch_cases", fetch_cases)
-    graph.add_node("analyze", analyze_cases)
-    graph.add_node("generate", generate_response)
-    
-    # Edges
-    graph.add_edge("parse_query", "fetch_cases")
-    graph.add_edge("fetch_cases", "analyze")
-    graph.add_edge("analyze", "generate")
-    graph.add_edge("generate", END)
-    
-    graph.set_entry_point("parse_query")
-    
-    return graph.compile()
-
-async def fetch_cases(state: JaviState) -> JaviState:
-    """Obtiene casos relevantes de la API."""
-    query = state["messages"][-1].content
-    
-    # Extraer filtros de la query
-    filters = await extract_filters(query)
-    
-    # Llamar a la API de casos
-    cases = await cases_api.search(
-        company_id=state["context"]["company_id"],
-        **filters,
-    )
-    
-    return {"cases": cases}
-
-async def analyze_cases(state: JaviState) -> JaviState:
-    """Analiza los casos con el LLM."""
-    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
-    
-    analysis = await llm.ainvoke([
-        SystemMessage(content=JAVI_SYSTEM_PROMPT),
-        HumanMessage(content=f"""
-            Casos encontrados:
-            {json.dumps(state["cases"], indent=2)}
-            
-            Pregunta del usuario:
-            {state["messages"][-1].content}
-        """),
-    ])
-    
-    return {"context": analysis.content}
 ```
-
-### Clamy - Asistente de Analytics
-
-Especializado en análisis de datos y métricas.
-
-| Propiedad | Valor |
-|-----------|-------|
-| **Repositorio** | `GetClamo/clamy` |
-| **Framework** | LangGraph + MCP |
-| **Modelo** | Claude 3.5 Sonnet |
-| **Puerto** | 8124 |
-
-#### Capacidades
-
-- Generar reportes de cartera
-- Analizar tendencias temporales
-- Calcular métricas de riesgo
-- Proyecciones y predicciones
-- Comparativas por período
-
-#### Integración MCP (Model Context Protocol)
-
-Clamy usa MCP para conectarse directamente a Tinybird:
-
-```python
-from mcp import ClientSession
-from mcp.client.stdio import stdio_client
-
-async def create_clamy_with_mcp():
-    # Conectar a Tinybird via MCP
-    async with stdio_client(
-        command="npx",
-        args=["@tinybirdco/mcp-tinybird"],
-        env={"TINYBIRD_TOKEN": os.environ["TINYBIRD_TOKEN"]},
-    ) as (read, write):
-        async with ClientSession(read, write) as session:
-            # Listar herramientas disponibles
-            tools = await session.list_tools()
-            
-            # El LLM puede usar estas herramientas
-            return create_clamy_graph(session, tools)
-```
-
-#### Consultas Generadas
-
-Clamy puede generar y ejecutar queries SQL en Tinybird:
-
-```python
-async def execute_analytics_query(state: ClamyState) -> ClamyState:
-    """Genera y ejecuta query de analytics."""
-    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
-    
-    # Generar SQL
-    sql_response = await llm.ainvoke([
-        SystemMessage(content=CLAMY_SQL_PROMPT),
-        HumanMessage(content=f"""
-            Esquema de datos:
-            {TINYBIRD_SCHEMA}
-            
-            Pregunta:
-            {state["messages"][-1].content}
-            
-            Genera una query SQL para Tinybird.
-        """),
-    ])
-    
-    sql = extract_sql(sql_response.content)
-    
-    # Ejecutar en Tinybird
-    result = await tinybird.query(sql)
-    
-    return {"analytics_data": result}
-```
-
-## ask-clamo - Gateway Unificado
-
-Punto de entrada único que enruta a los agentes especializados.
-
-```python
-class AskClamoRouter:
-    def __init__(self):
-        self.javi = create_javi_graph()
-        self.clamy = create_clamy_graph()
-        self.classifier = ChatAnthropic(model="claude-3-haiku-20240307")
-    
-    async def route(self, message: str, context: dict) -> str:
-        # Clasificar intención
-        intent = await self.classify_intent(message)
-        
-        if intent == "case_query":
-            return await self.javi.ainvoke({
-                "messages": [HumanMessage(content=message)],
-                "context": context,
-            })
-        elif intent == "analytics":
-            return await self.clamy.ainvoke({
-                "messages": [HumanMessage(content=message)],
-                "context": context,
-            })
-        else:
-            # Respuesta directa sin agente
-            return await self.direct_response(message)
-    
-    async def classify_intent(self, message: str) -> str:
-        response = await self.classifier.ainvoke([
-            SystemMessage(content="""
-                Clasifica la intención del usuario:
-                - case_query: Preguntas sobre casos específicos
-                - analytics: Preguntas sobre métricas, tendencias, reportes
-                - general: Preguntas generales o saludos
-                
-                Responde solo con la categoría.
-            """),
-            HumanMessage(content=message),
-        ])
-        return response.content.strip().lower()
-```
-
-## Herramientas (Tools)
-
-### Cases API Tool
-
-```python
-@tool
-async def search_cases(
-    query: str,
-    status: str | None = None,
-    risk_level: str | None = None,
-    limit: int = 10,
-) -> list[dict]:
-    """
-    Busca casos en la base de datos.
-    
-    Args:
-        query: Texto de búsqueda (expediente, partes)
-        status: Filtrar por estado (EN_TRAMITE, ARCHIVADO, etc.)
-        risk_level: Filtrar por riesgo (LOW, MEDIUM, HIGH, CRITICAL)
-        limit: Número máximo de resultados
-    
-    Returns:
-        Lista de casos que coinciden con los criterios
-    """
-    response = await cases_api.search(
-        search=query,
-        status=status,
-        risk_level=risk_level,
-        limit=limit,
-    )
-    return response["data"]
-```
-
-### Tinybird Tool
-
-```python
-@tool
-async def query_analytics(sql: str) -> dict:
-    """
-    Ejecuta una query SQL en Tinybird.
-    
-    Args:
-        sql: Query SQL válida para el esquema de Tinybird
-    
-    Returns:
-        Resultados de la query
-    """
-    return await tinybird.query(sql)
-```
-
-### Vector Search Tool
-
-```python
-@tool
-async def search_similar_cases(
-    case_id: str,
-    limit: int = 5,
-) -> list[dict]:
-    """
-    Encuentra casos similares usando embeddings.
-    
-    Args:
-        case_id: ID del caso de referencia
-        limit: Número de casos similares a retornar
-    
-    Returns:
-        Lista de casos similares con score de similitud
-    """
-    # Obtener embedding del caso
-    case = await cases_api.get(case_id)
-    embedding = await get_case_embedding(case)
-    
-    # Buscar similares en vector store
-    similar = await vector_store.similarity_search(
-        embedding,
-        k=limit,
-    )
-    
-    return similar
-```
-
-## Streaming
-
-Los agentes soportan streaming para respuestas en tiempo real:
-
-```python
-async def stream_response(message: str, context: dict):
-    async for event in ask_clamo.astream_events(
-        {"messages": [HumanMessage(content=message)], "context": context},
-        version="v2",
-    ):
-        if event["event"] == "on_chat_model_stream":
-            yield event["data"]["chunk"].content
+ask-clamo/
+├── langgraph.json          # Configuración de LangGraph Platform
+├── pyproject.toml          # Dependencias de Python
+└── src/
+    └── ask_clamo/
+        ├── agent.py            # Entry point principal del grafo
+        ├── settings.py         # Configuración unificada
+        ├── widget_types.py     # Definiciones de tipos de gráficos
+        ├── state/
+        │   └── schemas.py      # AgentState + AppContext
+        ├── tools/
+        │   ├── registry.py     # Tool profiles (JAVI, CLAMY, LUNA)
+        │   ├── case_api.py     # Herramientas de casos de Javi (page-scoped)
+        │   ├── charts.py       # Herramientas de gráficos de Clamy
+        │   └── luna_global.py  # Herramientas globales de Luna
+        ├── middleware/
+        │   ├── case_context.py # Fetcher de contexto compartido
+        │   └── agent_middleware.py  # Aislamiento de herramientas
+        └── prompts/
+            ├── javi.py         # System prompt de Javi
+            ├── clamy.py        # System prompt de Clamy
+            └── luna.py         # System prompt de Luna
 ```
 
 ## Configuración
 
-### Variables de Entorno
+Variables de entorno para ask-clamo:
+
+| Variable | Descripción |
+|----------|-------------|
+| `LANGCHAIN_API_KEY` | API key de LangSmith para tracing |
+| `OPENAI_API_KEY` | API key de OpenAI para el LLM |
+| `CLAMO_CASES_URL` | URL del servicio clamo-cases |
+| `TINYBIRD_MCP_URL` | URL del servidor MCP de Tinybird |
+| `TINYBIRD_TOKEN` | Token de autenticación de Tinybird |
+
+## Desarrollo Local
 
 ```bash
-# LLM
-ANTHROPIC_API_KEY=sk-ant-...
+# Navegar a ask-clamo
+cd ask-clamo
 
-# APIs
-CLAMO_CASES_URL=http://localhost:4000
-TINYBIRD_TOKEN=p.eyJ...
+# Instalar dependencias
+uv sync
 
-# Vector Store (opcional)
-PINECONE_API_KEY=...
-PINECONE_INDEX=clamo-cases
+# Ejecutar localmente
+langgraph dev
 ```
 
-## Prompts del Sistema
+El servicio corre en el puerto **8123** por defecto.
 
-### Javi
+## Documentación Relacionada
 
-```
-Eres Javi, un asistente legal especializado en casos laborales peruanos.
-
-Tu rol es ayudar a abogados y profesionales legales a:
-- Entender el estado de sus casos
-- Explicar movimientos procesales
-- Identificar próximos pasos
-- Alertar sobre plazos importantes
-
-Reglas:
-- Siempre cita el número de expediente cuando hables de un caso
-- Explica términos legales de forma clara
-- Si no tienes información suficiente, pregunta
-- No inventes datos que no estén en el contexto
-```
-
-### Clamy
-
-```
-Eres Clamy, un asistente de analytics para gestión legal.
-
-Tu rol es ayudar a analizar:
-- Métricas de cartera de casos
-- Tendencias temporales
-- Distribución de riesgos
-- Proyecciones y predicciones
-
-Reglas:
-- Siempre muestra los datos que respaldan tus conclusiones
-- Usa visualizaciones cuando sea apropiado
-- Explica las limitaciones de los datos
-- Sugiere acciones basadas en los insights
-```
-
-## Próximos Pasos
-
-<CardGroup cols={2}>
-  <Card
-    title="Analytics"
-    icon="chart-line"
-    href="/arquitectura/analiticas"
-  >
-    Pipeline de analytics con Tinybird.
-  </Card>
-  <Card
-    title="Seguridad"
-    icon="shield"
-    href="/arquitectura/seguridad"
-  >
-    Arquitectura de seguridad.
-  </Card>
-</CardGroup>
-
+- [Servicio ask-clamo](/es/servicios/ask-clamo) - Documentación a nivel de servicio
+- [Arquitectura de Analytics](/es/arquitectura/analiticas) - Detalles de integración con Tinybird

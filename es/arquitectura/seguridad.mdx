@@ -1,477 +1,317 @@
 ---
 title: Seguridad
-description: Arquitectura de seguridad, autenticación y manejo de secretos
+description: Arquitectura de autenticación, autorización y gestión de secretos
 ---
 
-# Seguridad
+# Arquitectura de Seguridad
 
-La seguridad es fundamental en Clamo dado que maneja información legal sensible. Esta página describe la arquitectura de seguridad implementada.
+Clamo implementa una arquitectura de seguridad integral que cubre autenticación, autorización, aislamiento multi-tenant y gestión de secretos.
 
-## Arquitectura de Seguridad
+## Visión General
 
 ```mermaid
 flowchart TB
-    subgraph External [Externos]
-        User[Usuario]
-        Browser[Navegador]
+    subgraph Auth [Capa de Autenticación]
+        WorkOS[WorkOS AuthKit<br/>Enterprise SSO]
+        Session[Gestión de Sesiones]
     end
     
-    subgraph Edge [Edge Layer]
-        CDN[Cloudflare CDN]
-        WAF[WAF]
+    subgraph Control [Control Plane]
+        Supabase[(Supabase<br/>PostgreSQL)]
+        Vault[Supabase Vault<br/>Secrets]
     end
     
-    subgraph Auth [Autenticación]
-        WorkOS[WorkOS AuthKit]
-        JWT[JWT Validation]
+    subgraph Tenant [Aislamiento de Tenants]
+        Neon1[(Neon DB 1)]
+        Neon2[(Neon DB 2)]
+        NeonN[(Neon DB N)]
     end
     
-    subgraph App [Aplicación]
-        API[API Gateway]
-        RLS[Row Level Security]
+    subgraph Services [Servicios Backend]
+        TenantSvc[clamo-tenant]
+        CasesSvc[clamo-cases]
+        Sync[clamo-sync]
     end
     
-    subgraph Secrets [Secretos]
-        Vault[Supabase Vault]
-        EnvVars[Environment Variables]
-    end
+    WorkOS --> Session
+    Session --> TenantSvc
+    Session --> CasesSvc
     
-    subgraph Data [Datos]
-        Control[(Control DB)]
-        Tenant[(Tenant DBs)]
-    end
+    TenantSvc --> Supabase
+    CasesSvc --> Vault
+    Sync --> Vault
     
-    User --> Browser
-    Browser --> CDN
-    CDN --> WAF
-    WAF --> WorkOS
-    WorkOS --> JWT
-    JWT --> API
-    API --> RLS
-    RLS --> Vault
-    Vault --> Tenant
-    EnvVars --> API
+    Vault -->|Desencriptado| Neon1
+    Vault -->|Desencriptado| Neon2
+    Vault -->|Desencriptado| NeonN
 ```
 
 ## Autenticación
 
 ### WorkOS AuthKit
 
-Clamo utiliza WorkOS AuthKit para autenticación enterprise-grade:
+Clamo usa [WorkOS AuthKit](https://workos.com/docs/user-management) para autenticación, proporcionando:
 
-| Característica | Descripción |
-|----------------|-------------|
-| SSO | Single Sign-On con SAML/OIDC |
-| MFA | Autenticación multifactor |
-| Directory Sync | Sincronización con AD/LDAP |
-| Audit Logs | Registro de eventos de autenticación |
+- **Email/Password** - Autenticación estándar
+- **Social Login** - Google, Microsoft, GitHub
+- **Enterprise SSO** - SAML, OIDC para clientes enterprise
+- **Directory Sync** - Provisioning automático de usuarios desde IdPs
 
-### Flujo de Autenticación
+**Puntos de Integración**:
+- `clamo-web-app` - Usa `@workos-inc/authkit-nextjs` para auth server-side
+- `clamo-tenant` - Sincroniza organizaciones de WorkOS con empresas internas
+
+### Flujo de Sesión
 
 ```mermaid
 sequenceDiagram
-    participant U as Usuario
-    participant App as Aplicación
-    participant WOS as WorkOS
-    participant API as API Clamo
-
-    U->>App: Clic en Login
-    App->>WOS: Redirect a AuthKit
-    WOS->>U: Pantalla de login
-    U->>WOS: Credenciales + MFA
-    WOS->>App: Callback con código
-    App->>WOS: Intercambiar código
-    WOS-->>App: access_token + refresh_token
-    App->>API: Request con token
-    API->>API: Validar JWT
-    API-->>App: Respuesta
+    participant User as Usuario
+    participant WebApp as clamo-web-app
+    participant WorkOS
+    participant Tenant as clamo-tenant
+    participant DB as Supabase
+    
+    User->>WebApp: Request de login
+    WebApp->>WorkOS: Redirect a AuthKit
+    WorkOS->>User: UI de autenticación
+    User->>WorkOS: Credenciales
+    WorkOS->>WebApp: Callback con código
+    WebApp->>WorkOS: Intercambiar por tokens
+    WorkOS-->>WebApp: Access + Refresh tokens
+    WebApp->>Tenant: Validar sesión
+    Tenant->>DB: Obtener usuario + empresa
+    DB-->>Tenant: Contexto de usuario
+    Tenant-->>WebApp: Sesión validada
+    WebApp-->>User: Autenticado
 ```
 
-### Validación de Tokens
+### Estructura de Tokens
 
-```typescript
-import { jwtVerify } from 'jose';
-
-async function validateToken(token: string): Promise<TokenPayload> {
-  const JWKS = createRemoteJWKSet(
-    new URL('https://api.workos.com/.well-known/jwks.json')
-  );
-  
-  const { payload } = await jwtVerify(token, JWKS, {
-    issuer: 'https://api.workos.com',
-    audience: process.env.WORKOS_CLIENT_ID,
-  });
-  
-  return payload as TokenPayload;
-}
-```
+| Token | Propósito | Duración |
+|-------|-----------|----------|
+| Access Token | Autenticación de API | 15 minutos |
+| Refresh Token | Renovación de token | 30 días |
+| Session Token | Estado del frontend | Sesión del navegador |
 
 ## Autorización
 
-### Modelo de Roles
+### Control de Acceso Basado en Roles (RBAC)
 
-| Rol | Descripción | Permisos |
-|-----|-------------|----------|
-| `admin` | Administrador de empresa | CRUD completo, invitar usuarios, configuración |
-| `member` | Miembro | Lectura de casos, comentarios |
+Los usuarios tienen roles asignados dentro de su organización:
 
-### Row Level Security
+| Rol | Permisos |
+|-----|----------|
+| `owner` | Acceso completo, facturación, gestión de usuarios |
+| `admin` | Gestión de usuarios, todas las operaciones de casos |
+| `member` | Acceso estándar a casos |
+| `viewer` | Acceso de solo lectura |
 
-Cada request se ejecuta en el contexto del tenant:
+### Aislamiento de Organización
 
-```typescript
-// Middleware de RLS
-async function applyRLS(c: Context, next: Next) {
-  const session = decodeSession(c.req.header('x-clamo-session'));
-  
-  // Verificar que el usuario pertenece a la empresa
-  const user = await controlPrisma.user.findFirst({
-    where: {
-      id: session.userId,
-      companyId: session.companyId,
-    },
-  });
-  
-  if (!user) {
-    throw new ForbiddenError('Access denied');
-  }
-  
-  // Obtener conexión del tenant
-  const tenantDb = await getTenantConnection(session.companyId);
-  
-  // Adjuntar al contexto
-  c.set('user', user);
-  c.set('tenantDb', tenantDb);
-  
-  await next();
-}
+Cada request de API está limitado a la organización del usuario:
+
+```mermaid
+flowchart LR
+    Request[API Request] --> Auth[Auth Middleware]
+    Auth --> Context[Extraer company_id]
+    Context --> Query[Query con Scope]
+    Query --> TenantDB[(Base de Datos del Tenant)]
 ```
 
-### Verificación de Permisos
+El `company_id` se extrae de la sesión autenticada y se usa para:
+1. Enrutar a la base de datos correcta del tenant
+2. Filtrar todas las queries a los datos de ese tenant
+3. Aplicar row-level security
 
-```typescript
-function requireRole(allowedRoles: Role[]) {
-  return async (c: Context, next: Next) => {
-    const user = c.get('user');
-    
-    if (!allowedRoles.includes(user.role)) {
-      throw new ForbiddenError(
-        `This action requires one of: ${allowedRoles.join(', ')}`
-      );
-    }
-    
-    await next();
-  };
-}
+## Arquitectura de Base de Datos Multi-Tenant
 
-// Uso
-app.post('/admin/companies', requireRole(['admin']), createCompany);
+### Modelo de Dos Planos
+
+| Plano | Base de Datos | Propósito |
+|-------|---------------|-----------|
+| **Control Plane** | Supabase (PostgreSQL) | Metadatos de tenant, usuarios, datos de referencia |
+| **Data Plane** | Neon (PostgreSQL branches) | Datos de casos aislados por empresa |
+
+### Aislamiento de Tenants
+
+Cada empresa tiene una branch de base de datos Neon dedicada:
+
+```mermaid
+flowchart TB
+    subgraph Control [Control Plane - Supabase]
+        Companies[tabla companies]
+        CompanyDB[tabla company_databases]
+        Users[tabla users]
+        Vault[(vault.secrets)]
+    end
+    
+    subgraph Data [Data Plane - Neon]
+        Branch1[Branch: company-abc<br/>Cases, Movements]
+        Branch2[Branch: company-xyz<br/>Cases, Movements]
+        Branch3[Branch: company-123<br/>Cases, Movements]
+    end
+    
+    Companies --> CompanyDB
+    CompanyDB -->|pooledConnSecretId| Vault
+    CompanyDB -->|directConnSecretId| Vault
+    
+    Vault -->|Decrypt| Branch1
+    Vault -->|Decrypt| Branch2
+    Vault -->|Decrypt| Branch3
 ```
 
-## Manejo de Secretos
+### Seguridad de Connection Strings
+
+Los connection strings se almacenan encriptados en Supabase Vault:
+
+```sql
+-- Estructura del Vault
+vault.secrets (
+  id uuid,
+  name text,        -- ej., "company-abc-pooled"
+  secret text,      -- Connection string encriptado
+  ...
+)
+
+-- Vista de desencriptación (requiere RLS)
+vault.decrypted_secrets (
+  id uuid,
+  name text,
+  decrypted_secret text  -- Connection string en texto plano
+)
+```
+
+Los servicios acceden a los connection strings vía la vista de desencriptación del vault:
+
+```sql
+SELECT 
+  cd.company_id,
+  vs_pooled.decrypted_secret as pooled_connection,
+  vs_direct.decrypted_secret as direct_connection
+FROM company_databases cd
+LEFT JOIN vault.decrypted_secrets vs_pooled 
+  ON vs_pooled.name = cd."pooledConnSecretId"
+LEFT JOIN vault.decrypted_secrets vs_direct 
+  ON vs_direct.name = cd."directConnSecretId"
+WHERE cd.company_id = $1
+```
+
+## Gestión de Secretos
 
 ### Supabase Vault
 
-Las credenciales de bases de datos de tenant se almacenan en Supabase Vault:
+Toda la configuración sensible se almacena en Supabase Vault:
 
-```typescript
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!,
-);
-
-// Almacenar secreto
-async function storeSecret(name: string, value: string): Promise<string> {
-  const { data, error } = await supabase.rpc('vault.create_secret', {
-    secret: value,
-    name: name,
-  });
-  
-  if (error) throw error;
-  return data.id;
-}
-
-// Obtener secreto
-async function getSecret(secretId: string): Promise<string> {
-  const { data, error } = await supabase.rpc('vault.read_secret', {
-    secret_id: secretId,
-  });
-  
-  if (error) throw error;
-  return data.decrypted_secret;
-}
-```
+| Tipo de Secreto | Ejemplo |
+|-----------------|---------|
+| Conexiones de base de datos | URLs pooled/direct de Neon |
+| API keys | Tinybird, SendGrid, Ably |
+| Credenciales de servicio | Steel.dev, Anthropic |
 
 ### Variables de Entorno
 
-Secretos de aplicación se manejan con variables de entorno:
+Los servicios reciben configuración no sensible vía variables de entorno:
 
-```bash
-# Nunca commitear a git
-# .env.local (desarrollo)
-# Vercel/Railway (producción)
+| Variable | Descripción |
+|----------|-------------|
+| `SUPABASE_URL` | URL del control plane |
+| `SUPABASE_SERVICE_KEY` | Service role key (acceso al vault) |
+| `TINYBIRD_HOST` | Endpoint de analytics |
 
-# WorkOS
-WORKOS_API_KEY=sk_live_...
-WORKOS_CLIENT_ID=client_...
+### Integración de clamo-sync con Vault
 
-# Supabase
-SUPABASE_URL=https://...
-SUPABASE_SERVICE_KEY=eyJ...
+El servicio de sync en Rust obtiene conexiones de tenants desde el vault:
 
-# Neon
-NEON_API_KEY=...
-
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-### Rotación de Secretos
-
-```typescript
-async function rotateNeonCredentials(companyId: string) {
-  const company = await controlPrisma.companyDatabase.findUnique({
-    where: { companyId },
-  });
-  
-  // 1. Crear nuevas credenciales en Neon
-  const newCredentials = await neon.rotatePassword({
-    projectId: company.neonProjectId,
-    branchId: company.neonBranchId,
-  });
-  
-  // 2. Crear nuevos secretos en Vault
-  const newPooledSecretId = await storeSecret(
-    `tenant-${companyId}-pooled-${Date.now()}`,
-    newCredentials.pooledUri,
-  );
-  
-  const newDirectSecretId = await storeSecret(
-    `tenant-${companyId}-direct-${Date.now()}`,
-    newCredentials.directUri,
-  );
-  
-  // 3. Actualizar referencias
-  await controlPrisma.companyDatabase.update({
-    where: { companyId },
-    data: {
-      pooledConnSecretId: newPooledSecretId,
-      directConnSecretId: newDirectSecretId,
-    },
-  });
-  
-  // 4. Eliminar secretos antiguos (después de grace period)
-  setTimeout(async () => {
-    await deleteSecret(company.pooledConnSecretId);
-    await deleteSecret(company.directConnSecretId);
-  }, 60000); // 1 minuto
+```rust
+// discovery/supabase.rs
+pub async fn list_tenants(&self) -> Result<Vec<TenantConfig>> {
+    // Usar RPC para ejecutar query con desencriptación del vault
+    let tenants = self.client
+        .rpc("get_active_tenants_with_connections", json!({}))
+        .execute()
+        .await?;
+    
+    Ok(tenants)
 }
 ```
 
-## Encriptación
+## Seguridad de API
 
-### En Tránsito
+### Autenticación de Requests
 
-- TLS 1.3 obligatorio para todas las conexiones
-- HSTS habilitado
-- Certificate pinning en aplicaciones móviles
+Todos los endpoints de API requieren autenticación:
 
-### En Reposo
-
-- Neon: Encriptación AES-256 automática
-- Supabase Vault: Encriptación con claves gestionadas
-- Backups: Encriptados con claves rotadas
-
-## Protección de APIs
+```typescript
+// Patrón de middleware
+app.use("/api/*", async (c, next) => {
+  const token = c.req.header("Authorization")?.replace("Bearer ", "");
+  
+  if (!token) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  
+  const session = await validateToken(token);
+  c.set("session", session);
+  
+  await next();
+});
+```
 
 ### Rate Limiting
 
-```typescript
-import { Ratelimit } from '@upstash/ratelimit';
-import { Redis } from '@upstash/redis';
+Los endpoints de API implementan rate limiting:
 
-const ratelimit = new Ratelimit({
-  redis: Redis.fromEnv(),
-  limiter: Ratelimit.slidingWindow(100, '1 m'),
-  analytics: true,
-});
+| Tipo de Endpoint | Límite |
+|------------------|--------|
+| Público | 100 req/min |
+| Autenticado | 1000 req/min |
+| Webhook | 10 req/seg |
 
-async function rateLimitMiddleware(c: Context, next: Next) {
-  const identifier = c.get('user')?.id || c.req.header('x-forwarded-for');
-  
-  const { success, limit, remaining, reset } = await ratelimit.limit(identifier);
-  
-  c.header('X-RateLimit-Limit', limit.toString());
-  c.header('X-RateLimit-Remaining', remaining.toString());
-  c.header('X-RateLimit-Reset', reset.toString());
-  
-  if (!success) {
-    throw new RateLimitError('Too many requests');
-  }
-  
-  await next();
-}
-```
+### Configuración CORS
 
-### Input Validation
+Los requests cross-origin están restringidos a orígenes permitidos:
 
 ```typescript
-import { z } from 'zod';
-
-const CreateCaseSchema = z.object({
-  expediente: z.string()
-    .regex(/^\d{5}-\d{4}-\d-\d{4}-[A-Z]{2}-[A-Z]{2}-\d{2}$/)
-    .max(30),
-  plaintiff: z.string().min(2).max(200),
-  defendant: z.string().min(2).max(200),
-  claimAmount: z.number().positive().optional(),
-});
-
-function validateInput<T>(schema: z.Schema<T>) {
-  return async (c: Context, next: Next) => {
-    const body = await c.req.json();
-    
-    const result = schema.safeParse(body);
-    
-    if (!result.success) {
-      throw new ValidationError(result.error.errors);
-    }
-    
-    c.set('validatedBody', result.data);
-    await next();
-  };
-}
+const corsConfig = {
+  origin: [
+    "https://app.clamo.dev",
+    "https://*.clamo.dev",
+    process.env.NODE_ENV === "development" && "http://localhost:3000",
+  ].filter(Boolean),
+  credentials: true,
+};
 ```
 
-### SQL Injection Prevention
+## Seguridad de Datos
 
-```typescript
-// Siempre usar queries parametrizadas
-// CORRECTO
-const cases = await prisma.case.findMany({
-  where: {
-    expediente: { contains: searchTerm },
-  },
-});
+### Encriptación
 
-// INCORRECTO - Vulnerable a SQL injection
-// const cases = await prisma.$queryRaw`
-//   SELECT * FROM cases WHERE expediente LIKE '%${searchTerm}%'
-// `;
-```
-
-## Audit Logging
-
-```typescript
-interface AuditLog {
-  timestamp: Date;
-  userId: string;
-  companyId: string;
-  action: string;
-  resource: string;
-  resourceId: string;
-  details: Record<string, unknown>;
-  ip: string;
-  userAgent: string;
-}
-
-async function logAuditEvent(c: Context, action: string, resource: string, resourceId: string) {
-  const user = c.get('user');
-  
-  const log: AuditLog = {
-    timestamp: new Date(),
-    userId: user.id,
-    companyId: user.companyId,
-    action,
-    resource,
-    resourceId,
-    details: {},
-    ip: c.req.header('x-forwarded-for') || 'unknown',
-    userAgent: c.req.header('user-agent') || 'unknown',
-  };
-  
-  await auditLogService.create(log);
-}
-```
-
-## Compliance
-
-### GDPR
-
-- Derecho de acceso: API para exportar datos del usuario
-- Derecho al olvido: Proceso de eliminación de datos
-- Portabilidad: Exportación en formato estándar
+| Estado de Datos | Método |
+|-----------------|--------|
+| En Reposo | AES-256 (Neon, Supabase) |
+| En Tránsito | TLS 1.3 |
+| Secretos | Encriptación de Supabase Vault |
 
 ### Retención de Datos
 
-| Tipo de Dato | Retención |
-|--------------|-----------|
-| Casos activos | Indefinida |
-| Casos archivados | 10 años |
-| Audit logs | 2 años |
-| Session logs | 90 días |
+| Tipo de Datos | Retención |
+|---------------|-----------|
+| Datos de casos | Indefinido (datos del cliente) |
+| Logs de auditoría | 2 años |
+| Datos de sesión | 30 días |
+| Analytics | 1 año |
 
-## Checklist de Seguridad
+### Logging de Auditoría
 
-<Steps>
-  <Step title="Autenticación">
-    - WorkOS AuthKit configurado
-    - MFA habilitado para admins
-    - Tokens con expiración corta
-    - Refresh token rotation
-  </Step>
-  
-  <Step title="Autorización">
-    - RBAC implementado
-    - Row Level Security activo
-    - Validación de pertenencia a tenant
-  </Step>
-  
-  <Step title="Secretos">
-    - Credenciales en Vault
-    - Variables de entorno seguras
-    - Rotación periódica
-  </Step>
-  
-  <Step title="APIs">
-    - Rate limiting activo
-    - Input validation
-    - SQL injection prevention
-    - CORS configurado
-  </Step>
-  
-  <Step title="Monitoreo">
-    - Audit logging
-    - Alertas de seguridad
-    - Detección de anomalías
-  </Step>
-</Steps>
+Las operaciones críticas se registran:
 
-## Reporte de Vulnerabilidades
+- Eventos de autenticación de usuarios
+- Acceso a datos (lectura/escritura)
+- Cambios de configuración
+- Uso de API keys
 
-Si encuentras una vulnerabilidad de seguridad, por favor repórtala de forma responsable a:
+## Documentación Relacionada
 
-- Email: security@getclamo.com
-- No publiques la vulnerabilidad antes de que sea corregida
-
-## Próximos Pasos
-
-<CardGroup cols={2}>
-  <Card
-    title="Autenticación"
-    icon="key"
-    href="/guias/autenticacion"
-  >
-    Guía de integración con WorkOS.
-  </Card>
-  <Card
-    title="Multi-Tenancy"
-    icon="building"
-    href="/guias/multi-tenancy"
-  >
-    Arquitectura multi-tenant.
-  </Card>
-</CardGroup>
-
+- [Guía de Multi-Tenancy](/es/guias/multi-tenancy)
+- [Guía de Autenticación](/es/guias/autenticacion)
+- [Servicio clamo-tenant](/es/servicios/clamo-tenant)

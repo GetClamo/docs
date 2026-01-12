@@ -278,7 +278,29 @@ pnpm test
 | `@workos-inc/node` | SDK de WorkOS |
 | `@prisma/client` | ORM |
 | `@getclamo/database` | Esquemas compartidos |
-| `@getclamo/contracts` | Tipos y validaciones |
 | `hono` | Framework HTTP |
 | `kafkajs` | Mensajería |
 
+
+
+## SDK
+
+Este servicio publica un SDK de TypeScript para consumo por otros servicios:
+
+```bash
+pnpm add @getclamo/tenant-sdk
+```
+
+```typescript
+import { TenantClient } from "@getclamo/tenant-sdk";
+
+const tenant = new TenantClient({
+  baseUrl: process.env.TENANT_SERVICE_URL,
+});
+
+// Obtener usuario actual
+const user = await tenant.me.get();
+
+// Obtener empresa del usuario
+const company = await tenant.me.company();
+```

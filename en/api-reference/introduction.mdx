@@ -6,3 +6,236 @@ description: Conventions, versioning, and structure of Clamo APIs
 # API Introduction
 
 Clamo APIs follow RESTful principles and are designed to be intuitive and consistent.
+
+## Base URL
+
+| Environment | URL |
+|-------------|-----|
+| Production | `https://api.clamo.dev` |
+| Staging | `https://staging-api.clamo.dev` |
+| Local | `http://localhost:4000` (cases), `http://localhost:4001` (tenant) |
+
+## Versioning
+
+All APIs are versioned using a URL prefix:
+
+```
+https://api.clamo.dev/v1/cases
+```
+
+Currently only version `v1` exists. When breaking changes are introduced, a new version will be created while maintaining compatibility with the previous one.
+
+## Request Format
+
+### Content-Type
+
+All requests with a body must use `application/json`:
+
+```bash
+curl -X POST https://api.clamo.dev/v1/cases \
+  -H "Content-Type: application/json" \
+  -d '{"expediente": "00001-2024-0-1234-JR-LA-01"}'
+```
+
+### Required Headers
+
+| Header | Description | Required |
+|--------|-------------|----------|
+| `Authorization` | WorkOS Bearer token | Yes |
+| `x-clamo-session` | Base64-encoded session | Yes |
+| `Content-Type` | `application/json` | For POST/PATCH |
+
+## Response Format
+
+### Successful Responses
+
+Successful responses return the resource directly or an object with metadata:
+
+**Single resource:**
+
+```json
+{
+  "id": "case_abc123",
+  "expediente": "00001-2024-0-1234-JR-LA-01",
+  "plaintiff": "Juan Pérez",
+  "defendant": "Empresa S.A.C.",
+  "status": "EN_TRAMITE"
+}
+```
+
+**List with pagination:**
+
+```json
+{
+  "data": [
+    { "id": "case_abc123", "expediente": "..." },
+    { "id": "case_def456", "expediente": "..." }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 150,
+    "totalPages": 8
+  }
+}
+```
+
+### Error Responses
+
+Errors follow a consistent format:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "The 'expediente' field is required",
+    "details": {
+      "field": "expediente",
+      "constraint": "required"
+    }
+  }
+}
+```
+
+## Pagination
+
+Lists support pagination with the following parameters:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `page` | number | 1 | Page number |
+| `limit` | number | 20 | Results per page (max: 100) |
+
+Example:
+
+```bash
+GET /v1/cases?page=2&limit=50
+```
+
+## Sorting
+
+Use `sortBy` and `sortOrder` to sort results:
+
+| Parameter | Type | Default | Values |
+|-----------|------|---------|--------|
+| `sortBy` | string | `createdAt` | Field to sort by |
+| `sortOrder` | string | `desc` | `asc` or `desc` |
+
+Example:
+
+```bash
+GET /v1/cases?sortBy=filingDate&sortOrder=asc
+```
+
+## Filtering
+
+List endpoints support specific filters:
+
+```bash
+GET /v1/cases?status=EN_TRAMITE&riskLevel=HIGH&district=LIMA
+```
+
+Available filters vary by resource. Consult the documentation for each endpoint.
+
+## Search
+
+Use the `search` parameter for free-text search:
+
+```bash
+GET /v1/cases?search=empresa%20sac
+```
+
+Search is applied to relevant fields like `expediente`, `plaintiff`, `defendant`.
+
+## Rate Limiting
+
+APIs have rate limits to protect the service:
+
+| Plan | Limit |
+|------|-------|
+| Free | 100 req/min |
+| Pro | 1000 req/min |
+| Enterprise | 10000 req/min |
+
+Response headers:
+
+```
+X-RateLimit-Limit: 1000
+X-RateLimit-Remaining: 999
+X-RateLimit-Reset: 1704200000
+```
+
+## HTTP Codes
+
+| Code | Meaning |
+|------|---------|
+| 200 | OK - Successful request |
+| 201 | Created - Resource created |
+| 204 | No Content - Successful deletion |
+| 400 | Bad Request - Validation error |
+| 401 | Unauthorized - Invalid or expired token |
+| 403 | Forbidden - No permissions |
+| 404 | Not Found - Resource doesn't exist |
+| 409 | Conflict - Conflict (e.g., duplicate) |
+| 422 | Unprocessable Entity - Business error |
+| 429 | Too Many Requests - Rate limit exceeded |
+| 500 | Internal Server Error - Server error |
+
+## Available SDKs
+
+<CardGroup cols={2}>
+  <Card title="JavaScript/TypeScript" icon="js">
+    ```bash
+    npm install @getclamo/sdk
+    ```
+  </Card>
+  <Card title="Python" icon="python">
+    ```bash
+    pip install clamo-sdk
+    ```
+  </Card>
+</CardGroup>
+
+## Complete Example
+
+```javascript
+const response = await fetch('https://api.clamo.dev/v1/cases', {
+  method: 'GET',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'x-clamo-session': sessionToken,
+  },
+});
+
+if (!response.ok) {
+  const error = await response.json();
+  console.error('Error:', error.error.message);
+  return;
+}
+
+const { data: cases, pagination } = await response.json();
+
+console.log(`Showing ${cases.length} of ${pagination.total} cases`);
+cases.forEach(caso => {
+  console.log(`${caso.expediente} - ${caso.status}`);
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Authentication"
+    icon="key"
+    href="/en/api-reference/authentication"
+  >
+    Learn how to authenticate with the APIs.
+  </Card>
+  <Card
+    title="Errors"
+    icon="triangle-exclamation"
+    href="/en/api-reference/errors"
+  >
+    Error handling and response codes.
+  </Card>
+</CardGroup>

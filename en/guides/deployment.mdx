@@ -5,7 +5,7 @@ description: Deployment procedures guide for Clamo services
 
 # Deployment Guide
 
-This guide documents deployment procedures for the different Clamo services.
+This guide documents the deployment procedures for the different Clamo services.
 
 ## Environments
 
@@ -52,6 +52,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Deploy steps...
+
+  deploy-production:
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      # Production deploy with manual approval
 ```
 
 ### Deployment Flow
@@ -80,6 +88,12 @@ vercel --env staging
 vercel --prod
 ```
 
+**Environment Variables in Vercel**:
+- `NEXT_PUBLIC_API_URL`
+- `NEXT_PUBLIC_TENANT_API_URL`
+- `WORKOS_CLIENT_ID`
+- `WORKOS_API_KEY`
+
 ### TypeScript APIs (clamo-tenant, clamo-cases)
 
 **Platform**: Railway / Fly.io
@@ -92,26 +106,82 @@ railway up
 fly deploy
 ```
 
+**Dockerfile**:
+
+```dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN npm install -g pnpm && pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm build
+
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./
+EXPOSE 4001
+CMD ["node", "dist/index.js"]
+```
+
+### CEJ Connector (Python)
+
+**Platform**: Docker on VM / Kubernetes
+
+```bash
+# Build image
+docker build -t clamo-cej-connector:latest .
+
+# Push to registry
+docker tag clamo-cej-connector:latest gcr.io/clamo/cej-connector:latest
+docker push gcr.io/clamo/cej-connector:latest
+
+# Deploy on Kubernetes
+kubectl apply -f k8s/cej-connector.yaml
+```
+
+### Ingest Worker (Go)
+
+**Platform**: Docker on VM / Kubernetes
+
+```bash
+# Build
+docker build -t clamo-ingest-go:latest .
+
+# Deploy
+kubectl rollout restart deployment/clamo-ingest-go
+```
+
 ## Database Migrations
 
 ### Migration Process
 
 <Warning>
-Database migrations must be run **before** deploying new code.
+Database migrations must be executed **before** deploying new code.
 </Warning>
 
 ```bash
 # 1. Verify current status
 clamo db status stg
 
-# 2. Run migrations on staging
+# 2. Execute migrations on staging
 clamo db migrate stg
 
 # 3. Verify everything works
 # ... manual testing ...
 
-# 4. Run on production
+# 4. Execute on production
 clamo db migrate prd
+```
+
+### Tenant Migrations
+
+Tenant migrations are executed on all active databases:
+
+```bash
+# Mass migration script
+clamo db migrate-all-tenants prd
 ```
 
 ## Rollback
@@ -132,7 +202,7 @@ kubectl rollout undo deployment/clamo-tenant
 ### Database Rollback
 
 <Warning>
-Database rollbacks can cause data loss. Always backup before.
+Database rollbacks can cause data loss. Always backup before proceeding.
 </Warning>
 
 ```bash
@@ -140,6 +210,7 @@ Database rollbacks can cause data loss. Always backup before.
 npx prisma migrate resolve --rolled-back "migration_name"
 
 # With Neon (point-in-time recovery)
+# Create branch from a previous point
 neon branches create --name recovery --parent main --point-in-time "2025-01-01T00:00:00Z"
 ```
 
@@ -164,6 +235,7 @@ All services expose:
 SERVICES=(
   "https://api.getclamo.com/health"
   "https://tenant.getclamo.com/health"
+  "https://app.getclamo.com/api/health"
 )
 
 for service in "${SERVICES[@]}"; do
@@ -178,6 +250,25 @@ done
 
 echo "All services healthy!"
 ```
+
+## Post-Deploy Monitoring
+
+### Metrics to Observe
+
+1. **Error Rate**: Should stay below 1%
+2. **P95 Latency**: Should stay below 500ms
+3. **CPU/Memory**: No abnormal spikes
+
+### Alerts
+
+Configured in Grafana/PagerDuty:
+
+| Alert | Condition | Severity |
+|-------|-----------|----------|
+| High Error Rate | > 5% in 5min | Critical |
+| High Latency | P95 > 2s | Warning |
+| Service Down | Health check failed | Critical |
+| Database Connection | Pool exhausted | Critical |
 
 ## Deployment Checklist
 
@@ -200,7 +291,7 @@ echo "All services healthy!"
 
 - [ ] Monitor metrics for 30min
 - [ ] Check error logs
-- [ ] Notify team
+- [ ] Notify the team
 - [ ] Update changelog
 
 ## Next Steps
@@ -209,16 +300,15 @@ echo "All services healthy!"
   <Card
     title="Development Environment"
     icon="laptop-code"
-    href="/en/internal/development-environment"
+    href="/en/getting-started/local-environment"
   >
     Local environment setup.
   </Card>
   <Card
     title="Debugging"
     icon="bug"
-    href="/en/internal/debugging"
+    href="/en/guides/debugging"
   >
     Troubleshooting guide.
   </Card>
 </CardGroup>
-

@@ -12,7 +12,7 @@ Clamo está construido como una arquitectura de microservicios distribuida, opti
 ```mermaid
 flowchart TB
     subgraph Frontend [Capa Frontend]
-        WebApp[clamo-web-app<br/>Next.js 16]
+        WebApp[clamo-web-app<br/>Next.js 15]
         DesktopApp[clamo-desktop-app<br/>Electron]
         UI[clamo-ui<br/>Componentes]
     end
@@ -60,7 +60,7 @@ flowchart TB
 
 | Servicio | Tecnología | Descripción |
 |----------|------------|-------------|
-| `clamo-web-app` | Next.js 16, React 19 | Aplicación web principal con dashboard, gestión de casos y onboarding |
+| `clamo-web-app` | Next.js 15, React 19 | Aplicación web principal con dashboard, gestión de casos y onboarding |
 | `clamo-desktop-app` | Electron, TypeScript | Aplicación de escritorio para acceso offline |
 | `clamo-ui` | React, Radix UI | Librería de componentes compartidos |
 
@@ -70,7 +70,7 @@ flowchart TB
 |----------|------------|--------|-------------|
 | `clamo-tenant` | Hono, TypeScript | 4001 | Gestión de empresas, usuarios, onboarding y configuración |
 | `clamo-cases` | Hono, TypeScript | 4000 | CRUD de casos, movimientos, hitos y documentos |
-| `clamo-mailing` | React Email, SendGrid | 4002 | Envío de emails transaccionales y notificaciones |
+| `clamo-mailing` | Hono, React Email | 4002 | Envío de emails transaccionales y notificaciones |
 | `clamo-dashboards` | Rust, Axum | 8020 | API de dashboards y widgets personalizables |
 | `clamo-widget-server` | TypeScript | 3005 | Servidor de widgets embebibles |
 
@@ -78,7 +78,7 @@ flowchart TB
 
 | Servicio | Tecnología | Descripción |
 |----------|------------|-------------|
-| `ask-clamo` | LangGraph, Python | Agente unificado que consolida Javi y Clamy |
+| `ask-clamo` | LangGraph, Python | Agente unificado que consolida Javi, Clamy y Luna |
 | `javi` | LangGraph, Python | Asistente especializado en consultas de casos |
 | `clamy` | LangGraph, Python | Asistente de analytics con integración MCP/Tinybird |
 
@@ -159,14 +159,29 @@ sequenceDiagram
 - **Supabase Vault**: Almacenamiento seguro de secretos y credenciales
 - **Row Level Security**: Aislamiento de datos por tenant en queries
 
-## Paquetes Compartidos
+## SDKs de Servicios
+
+Los paquetes de contratos API han sido deprecados. Todos los servicios ahora usan **SDKs de servicio** para comunicación API:
+
+| Lenguaje | Tenant SDK | Cases SDK |
+|----------|------------|-----------|
+| TypeScript | `@getclamo/tenant` | `@getclamo/cases` |
+| Python | `clamo-tenant-sdk-py` | `clamo-cases-sdk-py` |
+| Rust | `clamo-tenant-sdk-rust` | `clamo-cases-sdk-rust` |
+
+### Repositorios de SDKs
+
+- **TypeScript**: `GetClamo/clamo-tenant-sdk-ts`, `GetClamo/clamo-cases-sdk-ts`
+- **Python**: `GetClamo/clamo-tenant-sdk-py`, `GetClamo/clamo-cases-sdk-py`
+- **Rust**: `GetClamo/clamo-tenant-sdk-rust`, `GetClamo/clamo-cases-sdk-rust`
+
+### Paquetes Compartidos
 
 | Paquete | Descripción |
 |---------|-------------|
-| `@getclamo/contracts` | Schemas Zod y tipos TypeScript compartidos |
 | `@getclamo/database` | Cliente Prisma y utilidades de base de datos |
-| `@getclamo/tenant-sdk` | SDK para integración con el servicio de tenants |
-| `@getclamo/cases-sdk` | SDK para integración con el servicio de casos |
+| `@getclamo/widget-core` | Definiciones y esquemas de widgets |
+| `@getclamo/widget-ui` | Componentes React de widgets |
 
 ## Próximos Pasos
 

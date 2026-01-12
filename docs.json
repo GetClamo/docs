@@ -50,6 +50,13 @@
                   "es/guias/errores",
                   "es/guias/mejores-practicas"
                 ]
+              },
+              {
+                "group": "Desarrollo",
+                "pages": [
+                  "es/guias/depuracion",
+                  "es/guias/despliegue"
+                ]
               }
             ]
           },
@@ -110,19 +117,6 @@
                 ]
               }
             ]
-          },
-          {
-            "tab": "Interno",
-            "groups": [
-              {
-                "group": "Desarrollo",
-                "pages": [
-                  "es/interno/entorno-desarrollo",
-                  "es/interno/depuracion",
-                  "es/interno/despliegue"
-                ]
-              }
-            ]
           }
         ]
       },
@@ -160,6 +154,13 @@
                 "pages": [
                   "en/guides/errors",
                   "en/guides/best-practices"
+                ]
+              },
+              {
+                "group": "Development",
+                "pages": [
+                  "en/guides/debugging",
+                  "en/guides/deployment"
                 ]
               }
             ]
@@ -201,9 +202,9 @@
               {
                 "group": "API Documentation",
                 "pages": [
-                  "en/api-reference/introduccion",
-                  "en/api-reference/autenticacion",
-                  "en/api-reference/errores"
+                  "en/api-reference/introduction",
+                  "en/api-reference/authentication",
+                  "en/api-reference/errors"
                 ]
               }
             ]
@@ -214,23 +215,10 @@
               {
                 "group": "System Design",
                 "pages": [
-                  "en/architecture/pipeline-datos",
-                  "en/architecture/asistentes-ia",
-                  "en/architecture/analiticas",
-                  "en/architecture/seguridad"
-                ]
-              }
-            ]
-          },
-          {
-            "tab": "Internal",
-            "groups": [
-              {
-                "group": "Development",
-                "pages": [
-                  "en/internal/development-environment",
-                  "en/internal/debugging",
-                  "en/internal/deployment"
+                  "en/architecture/data-pipeline",
+                  "en/architecture/ai-assistants",
+                  "en/architecture/analytics",
+                  "en/architecture/security"
                 ]
               }
             ]

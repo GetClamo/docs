@@ -12,7 +12,7 @@ Clamo is built as a distributed microservices architecture, optimized for legal 
 ```mermaid
 flowchart TB
     subgraph Frontend [Frontend Layer]
-        WebApp[clamo-web-app<br/>Next.js 16]
+        WebApp[clamo-web-app<br/>Next.js 15]
         DesktopApp[clamo-desktop-app<br/>Electron]
         UI[clamo-ui<br/>Components]
     end
@@ -60,7 +60,7 @@ flowchart TB
 
 | Service | Technology | Description |
 |---------|------------|-------------|
-| `clamo-web-app` | Next.js 16, React 19 | Main web application with dashboard, case management, and onboarding |
+| `clamo-web-app` | Next.js 15, React 19 | Main web application with dashboard, case management, and onboarding |
 | `clamo-desktop-app` | Electron, TypeScript | Desktop application for offline access |
 | `clamo-ui` | React, Radix UI | Shared component library |
 
@@ -70,7 +70,7 @@ flowchart TB
 |---------|------------|------|-------------|
 | `clamo-tenant` | Hono, TypeScript | 4001 | Company, user, onboarding, and configuration management |
 | `clamo-cases` | Hono, TypeScript | 4000 | CRUD for cases, movements, milestones, and documents |
-| `clamo-mailing` | React Email, SendGrid | 4002 | Transactional emails and notifications |
+| `clamo-mailing` | Hono, React Email | 4002 | Transactional emails and notifications |
 | `clamo-dashboards` | Rust, Axum | 8020 | Dashboard and customizable widgets API |
 | `clamo-widget-server` | TypeScript | 3005 | Embeddable widgets server |
 
@@ -78,7 +78,7 @@ flowchart TB
 
 | Service | Technology | Description |
 |---------|------------|-------------|
-| `ask-clamo` | LangGraph, Python | Unified agent that consolidates Javi and Clamy |
+| `ask-clamo` | LangGraph, Python | Unified agent that consolidates Javi, Clamy, and Luna |
 | `javi` | LangGraph, Python | Assistant specialized in case queries |
 | `clamy` | LangGraph, Python | Analytics assistant with MCP/Tinybird integration |
 
@@ -159,14 +159,29 @@ sequenceDiagram
 - **Supabase Vault**: Secure storage of secrets and credentials
 - **Row Level Security**: Data isolation by tenant in queries
 
-## Shared Packages
+## Service SDKs
+
+API contracts packages have been deprecated. All services now use **service SDKs** for API communication:
+
+| Language | Tenant SDK | Cases SDK |
+|----------|------------|-----------|
+| TypeScript | `@getclamo/tenant` | `@getclamo/cases` |
+| Python | `clamo-tenant-sdk-py` | `clamo-cases-sdk-py` |
+| Rust | `clamo-tenant-sdk-rust` | `clamo-cases-sdk-rust` |
+
+### SDK Repositories
+
+- **TypeScript**: `GetClamo/clamo-tenant-sdk-ts`, `GetClamo/clamo-cases-sdk-ts`
+- **Python**: `GetClamo/clamo-tenant-sdk-py`, `GetClamo/clamo-cases-sdk-py`
+- **Rust**: `GetClamo/clamo-tenant-sdk-rust`, `GetClamo/clamo-cases-sdk-rust`
+
+### Shared Packages
 
 | Package | Description |
 |---------|-------------|
-| `@getclamo/contracts` | Shared Zod schemas and TypeScript types |
 | `@getclamo/database` | Prisma client and database utilities |
-| `@getclamo/tenant-sdk` | SDK for tenant service integration |
-| `@getclamo/cases-sdk` | SDK for cases service integration |
+| `@getclamo/widget-core` | Widget definitions and schemas |
+| `@getclamo/widget-ui` | Widget React components |
 
 ## Next Steps
 

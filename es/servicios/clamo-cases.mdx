@@ -366,10 +366,40 @@ pnpm test
 | Paquete | Uso |
 |---------|-----|
 | `@getclamo/database` | Prisma clients |
-| `@getclamo/contracts` | Tipos compartidos |
 | `@getclamo/tenant-sdk` | Resolución de tenant |
 | `hono` | Framework HTTP |
 | `ably` | Notificaciones real-time |
 | `ioredis` | Cache |
 | `@aws-sdk/client-s3` | Almacenamiento de documentos |
 
+
+
+## SDK
+
+Este servicio publica un SDK de TypeScript para consumo por otros servicios:
+
+```bash
+pnpm add @getclamo/cases-sdk
+```
+
+```typescript
+import { CasesClient } from "@getclamo/cases-sdk";
+
+const cases = new CasesClient({
+  baseUrl: process.env.CASES_SERVICE_URL,
+});
+
+// Listar casos con filtros
+const result = await cases.list({
+  status: "EN_TRAMITE",
+  riskLevel: "HIGH",
+  page: 1,
+  limit: 20,
+});
+
+// Obtener detalle de caso
+const caseDetail = await cases.get("case_abc123");
+
+// Obtener movimientos del caso
+const movements = await cases.movements("case_abc123");
+```

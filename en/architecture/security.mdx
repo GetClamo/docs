@@ -1,8 +1,317 @@
 ---
 title: Security
-description: Security architecture, authentication, and secrets management
+description: Authentication, authorization, and secrets management architecture
 ---
 
-# Security
+# Security Architecture
 
-Security is fundamental in Clamo since it handles sensitive legal information.
+Clamo implements a comprehensive security architecture covering authentication, authorization, multi-tenancy isolation, and secrets management.
+
+## Overview
+
+```mermaid
+flowchart TB
+    subgraph Auth [Authentication Layer]
+        WorkOS[WorkOS AuthKit<br/>Enterprise SSO]
+        Session[Session Management]
+    end
+    
+    subgraph Control [Control Plane]
+        Supabase[(Supabase<br/>PostgreSQL)]
+        Vault[Supabase Vault<br/>Secrets]
+    end
+    
+    subgraph Tenant [Tenant Isolation]
+        Neon1[(Neon DB 1)]
+        Neon2[(Neon DB 2)]
+        NeonN[(Neon DB N)]
+    end
+    
+    subgraph Services [Backend Services]
+        TenantSvc[clamo-tenant]
+        CasesSvc[clamo-cases]
+        Sync[clamo-sync]
+    end
+    
+    WorkOS --> Session
+    Session --> TenantSvc
+    Session --> CasesSvc
+    
+    TenantSvc --> Supabase
+    CasesSvc --> Vault
+    Sync --> Vault
+    
+    Vault -->|Decrypted| Neon1
+    Vault -->|Decrypted| Neon2
+    Vault -->|Decrypted| NeonN
+```
+
+## Authentication
+
+### WorkOS AuthKit
+
+Clamo uses [WorkOS AuthKit](https://workos.com/docs/user-management) for authentication, providing:
+
+- **Email/Password** - Standard authentication
+- **Social Login** - Google, Microsoft, GitHub
+- **Enterprise SSO** - SAML, OIDC for enterprise customers
+- **Directory Sync** - Automatic user provisioning from IdPs
+
+**Integration Points**:
+- `clamo-web-app` - Uses `@workos-inc/authkit-nextjs` for server-side auth
+- `clamo-tenant` - Syncs WorkOS organizations with internal companies
+
+### Session Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant WebApp as clamo-web-app
+    participant WorkOS
+    participant Tenant as clamo-tenant
+    participant DB as Supabase
+    
+    User->>WebApp: Login request
+    WebApp->>WorkOS: Redirect to AuthKit
+    WorkOS->>User: Authentication UI
+    User->>WorkOS: Credentials
+    WorkOS->>WebApp: Callback with code
+    WebApp->>WorkOS: Exchange for tokens
+    WorkOS-->>WebApp: Access + Refresh tokens
+    WebApp->>Tenant: Validate session
+    Tenant->>DB: Get user + company
+    DB-->>Tenant: User context
+    Tenant-->>WebApp: Session validated
+    WebApp-->>User: Authenticated
+```
+
+### Token Structure
+
+| Token | Purpose | Lifetime |
+|-------|---------|----------|
+| Access Token | API authentication | 15 minutes |
+| Refresh Token | Token renewal | 30 days |
+| Session Token | Frontend state | Browser session |
+
+## Authorization
+
+### Role-Based Access Control (RBAC)
+
+Users are assigned roles within their organization:
+
+| Role | Permissions |
+|------|-------------|
+| `owner` | Full access, billing, user management |
+| `admin` | User management, all case operations |
+| `member` | Standard case access |
+| `viewer` | Read-only access |
+
+### Organization Isolation
+
+Each API request is scoped to the user's organization:
+
+```mermaid
+flowchart LR
+    Request[API Request] --> Auth[Auth Middleware]
+    Auth --> Context[Extract company_id]
+    Context --> Query[Scoped Query]
+    Query --> TenantDB[(Tenant Database)]
+```
+
+The `company_id` is extracted from the authenticated session and used to:
+1. Route to the correct tenant database
+2. Filter all queries to that tenant's data
+3. Enforce row-level security
+
+## Multi-Tenant Database Architecture
+
+### Two-Plane Model
+
+| Plane | Database | Purpose |
+|-------|----------|---------|
+| **Control Plane** | Supabase (PostgreSQL) | Tenant metadata, users, reference data |
+| **Data Plane** | Neon (PostgreSQL branches) | Isolated per-company case data |
+
+### Tenant Isolation
+
+Each company has a dedicated Neon database branch:
+
+```mermaid
+flowchart TB
+    subgraph Control [Control Plane - Supabase]
+        Companies[companies table]
+        CompanyDB[company_databases table]
+        Users[users table]
+        Vault[(vault.secrets)]
+    end
+    
+    subgraph Data [Data Plane - Neon]
+        Branch1[Branch: company-abc<br/>Cases, Movements]
+        Branch2[Branch: company-xyz<br/>Cases, Movements]
+        Branch3[Branch: company-123<br/>Cases, Movements]
+    end
+    
+    Companies --> CompanyDB
+    CompanyDB -->|pooledConnSecretId| Vault
+    CompanyDB -->|directConnSecretId| Vault
+    
+    Vault -->|Decrypt| Branch1
+    Vault -->|Decrypt| Branch2
+    Vault -->|Decrypt| Branch3
+```
+
+### Connection String Security
+
+Connection strings are stored encrypted in Supabase Vault:
+
+```sql
+-- Vault structure
+vault.secrets (
+  id uuid,
+  name text,        -- e.g., "company-abc-pooled"
+  secret text,      -- Encrypted connection string
+  ...
+)
+
+-- Decryption view (requires RLS)
+vault.decrypted_secrets (
+  id uuid,
+  name text,
+  decrypted_secret text  -- Plaintext connection string
+)
+```
+
+Services access connection strings via the vault decryption view:
+
+```sql
+SELECT 
+  cd.company_id,
+  vs_pooled.decrypted_secret as pooled_connection,
+  vs_direct.decrypted_secret as direct_connection
+FROM company_databases cd
+LEFT JOIN vault.decrypted_secrets vs_pooled 
+  ON vs_pooled.name = cd."pooledConnSecretId"
+LEFT JOIN vault.decrypted_secrets vs_direct 
+  ON vs_direct.name = cd."directConnSecretId"
+WHERE cd.company_id = $1
+```
+
+## Secrets Management
+
+### Supabase Vault
+
+All sensitive configuration is stored in Supabase Vault:
+
+| Secret Type | Example |
+|-------------|---------|
+| Database connections | Neon pooled/direct URLs |
+| API keys | Tinybird, SendGrid, Ably |
+| Service credentials | Steel.dev, Anthropic |
+
+### Environment Variables
+
+Services receive non-sensitive configuration via environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `SUPABASE_URL` | Control plane URL |
+| `SUPABASE_SERVICE_KEY` | Service role key (vault access) |
+| `TINYBIRD_HOST` | Analytics endpoint |
+
+### clamo-sync Vault Integration
+
+The Rust sync service fetches tenant connections from vault:
+
+```rust
+// discovery/supabase.rs
+pub async fn list_tenants(&self) -> Result<Vec<TenantConfig>> {
+    // Use RPC to execute query with vault decryption
+    let tenants = self.client
+        .rpc("get_active_tenants_with_connections", json!({}))
+        .execute()
+        .await?;
+    
+    Ok(tenants)
+}
+```
+
+## API Security
+
+### Request Authentication
+
+All API endpoints require authentication:
+
+```typescript
+// Middleware pattern
+app.use("/api/*", async (c, next) => {
+  const token = c.req.header("Authorization")?.replace("Bearer ", "");
+  
+  if (!token) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  
+  const session = await validateToken(token);
+  c.set("session", session);
+  
+  await next();
+});
+```
+
+### Rate Limiting
+
+API endpoints implement rate limiting:
+
+| Endpoint Type | Limit |
+|---------------|-------|
+| Public | 100 req/min |
+| Authenticated | 1000 req/min |
+| Webhook | 10 req/sec |
+
+### CORS Configuration
+
+Cross-origin requests are restricted to allowed origins:
+
+```typescript
+const corsConfig = {
+  origin: [
+    "https://app.clamo.dev",
+    "https://*.clamo.dev",
+    process.env.NODE_ENV === "development" && "http://localhost:3000",
+  ].filter(Boolean),
+  credentials: true,
+};
+```
+
+## Data Security
+
+### Encryption
+
+| Data State | Method |
+|------------|--------|
+| At Rest | AES-256 (Neon, Supabase) |
+| In Transit | TLS 1.3 |
+| Secrets | Supabase Vault encryption |
+
+### Data Retention
+
+| Data Type | Retention |
+|-----------|-----------|
+| Case data | Indefinite (client data) |
+| Audit logs | 2 years |
+| Session data | 30 days |
+| Analytics | 1 year |
+
+### Audit Logging
+
+Critical operations are logged:
+
+- User authentication events
+- Data access (read/write)
+- Configuration changes
+- API key usage
+
+## Related Documentation
+
+- [Multi-Tenancy Guide](/en/guides/multi-tenancy)
+- [Authentication Guide](/en/guides/authentication)
+- [clamo-tenant Service](/en/services/clamo-tenant)

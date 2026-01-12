@@ -1,457 +1,253 @@
 ---
 title: Analytics
-description: Arquitectura de analytics en tiempo real con Tinybird y ClickHouse
+description: Arquitectura del pipeline de analytics con Tinybird
 ---
 
-# Analytics
+# Arquitectura de Analytics
 
-Clamo utiliza Tinybird (ClickHouse gestionado) para analytics en tiempo real sobre datos de casos legales.
+Clamo usa Tinybird como su motor de analytics, proporcionando agregaciones en tiempo real e insights a través de más de 200 bases de datos de tenants consolidadas en una única capa de analytics.
 
-## Arquitectura
+## Visión General de la Arquitectura
 
 ```mermaid
 flowchart TB
     subgraph Sources [Fuentes de Datos]
-        TenantDB[(Tenant DBs)]
-        Events[Eventos de App]
+        Sync[clamo-sync<br/>Rust CDC]
+        Ingest[clamo-ingest-go<br/>Kafka Events]
+        Upload[Carga Directa<br/>NDJSON/CSV]
     end
     
-    subgraph Sync [Sincronización]
-        ClamoSync[clamo-sync<br/>Rust]
-        EventCollector[Event Collector]
-    end
-    
-    subgraph Tinybird [Tinybird]
-        DS1[cases_ds]
-        DS2[movements_ds]
-        DS3[events_ds]
+    subgraph Tinybird [Plataforma Tinybird]
+        subgraph DS [Datasources]
+            Raw[Tablas Raw<br/>legal_cases, movements<br/>parties, decisions]
+            Kafka[Tablas Kafka<br/>cases_analytics<br/>movements_analytics]
+            Static[Datos Estáticos<br/>generales_mibanco<br/>padron_ruc]
+        end
         
-        Pipe1[cases_by_status]
-        Pipe2[risk_distribution]
-        Pipe3[timeline_metrics]
+        subgraph MV [Materializaciones]
+            Consolidated[cases_consolidated_mv]
+        end
         
-        API1[/cases_summary]
-        API2[/risk_report]
-        API3[/trends]
+        subgraph API [Endpoints]
+            Stats[api_cases_stats]
+            Trends[api_cases_trends]
+            Dist[api_cases_distribution]
+            Search[api_expedientes<br/>api_buscar]
+        end
     end
     
     subgraph Consumers [Consumidores]
-        Dashboard[Dashboard]
-        Clamy[Clamy Agent]
-        Exports[Exports]
+        Clamy[Clamy Assistant<br/>Integración MCP]
+        Luna[Luna Assistant<br/>Safe Tools]
+        Dashboards[clamo-dashboards<br/>Rust API]
     end
     
-    TenantDB --> ClamoSync
-    Events --> EventCollector
-    ClamoSync --> DS1
-    ClamoSync --> DS2
-    EventCollector --> DS3
-    DS1 --> Pipe1
-    DS1 --> Pipe2
-    DS2 --> Pipe3
-    Pipe1 --> API1
-    Pipe2 --> API2
-    Pipe3 --> API3
-    API1 --> Dashboard
-    API2 --> Clamy
-    API3 --> Exports
-```
-
-## Datasources
-
-### cases_ds
-
-Datos maestros de casos:
-
-```sql
--- Esquema del datasource
-SCHEMA >
-    `company_id` String,
-    `case_id` String,
-    `expediente` String,
-    `plaintiff` String,
-    `defendant` String,
-    `subject_matter` String,
-    `risk_level` Enum8('LOW' = 1, 'MEDIUM' = 2, 'HIGH' = 3, 'CRITICAL' = 4),
-    `claim_amount` Nullable(Float64),
-    `district` String,
-    `court` String,
-    `status` Enum8('EN_TRAMITE' = 1, 'EN_EJECUCION' = 2, 'ARCHIVADO' = 3, 'CONCLUIDO' = 4),
-    `stage_code` String,
-    `substage_code` String,
-    `filing_date` Date,
-    `created_at` DateTime,
-    `updated_at` DateTime
-
-ENGINE "MergeTree"
-ENGINE_PARTITION_KEY "toYYYYMM(filing_date)"
-ENGINE_SORTING_KEY "company_id, case_id"
-```
-
-### movements_ds
-
-Movimientos procesales:
-
-```sql
-SCHEMA >
-    `company_id` String,
-    `case_id` String,
-    `movement_id` String,
-    `date` Date,
-    `description` String,
-    `classification` Enum8('RESOLUCION' = 1, 'ESCRITO' = 2, 'NOTIFICACION' = 3, 'AUDIENCIA' = 4, 'OTRO' = 5),
-    `is_notification` UInt8,
-    `created_at` DateTime
-
-ENGINE "MergeTree"
-ENGINE_PARTITION_KEY "toYYYYMM(date)"
-ENGINE_SORTING_KEY "company_id, case_id, date"
-```
-
-### events_ds
-
-Eventos de aplicación para analytics de uso:
-
-```sql
-SCHEMA >
-    `company_id` String,
-    `user_id` String,
-    `event_type` String,
-    `event_data` String,
-    `timestamp` DateTime
-
-ENGINE "MergeTree"
-ENGINE_PARTITION_KEY "toYYYYMMDD(timestamp)"
-ENGINE_SORTING_KEY "company_id, timestamp"
-```
-
-## Pipes (Transformaciones)
-
-### cases_by_status
-
-Agregación de casos por estado:
-
-```sql
--- cases_by_status.pipe
-NODE aggregate
-SQL >
-    SELECT
-        company_id,
-        status,
-        count() as count,
-        sum(claim_amount) as total_claim_amount,
-        avg(claim_amount) as avg_claim_amount
-    FROM cases_ds
-    GROUP BY company_id, status
-
-TYPE materialized
-DATASOURCE cases_by_status_mv
-```
-
-### risk_distribution
-
-Distribución de riesgo por empresa:
-
-```sql
--- risk_distribution.pipe
-NODE aggregate
-SQL >
-    SELECT
-        company_id,
-        risk_level,
-        count() as count,
-        sum(claim_amount) as exposure
-    FROM cases_ds
-    WHERE status IN ('EN_TRAMITE', 'EN_EJECUCION')
-    GROUP BY company_id, risk_level
-
-TYPE materialized
-DATASOURCE risk_distribution_mv
-```
-
-### timeline_metrics
-
-Métricas temporales de movimientos:
-
-```sql
--- timeline_metrics.pipe
-NODE daily_movements
-SQL >
-    SELECT
-        company_id,
-        toDate(date) as day,
-        count() as movement_count,
-        countIf(classification = 'RESOLUCION') as resolutions,
-        countIf(is_notification = 1) as notifications
-    FROM movements_ds
-    WHERE date >= today() - 90
-    GROUP BY company_id, day
-
-TYPE materialized
-DATASOURCE timeline_metrics_mv
-```
-
-## API Endpoints
-
-### /cases_summary
-
-Resumen de cartera de casos:
-
-```sql
--- cases_summary.pipe
-NODE endpoint
-SQL >
-    %
-    SELECT
-        status,
-        count,
-        total_claim_amount,
-        avg_claim_amount
-    FROM cases_by_status_mv
-    WHERE company_id = {{String(company_id, required=True)}}
-
-TYPE endpoint
-```
-
-Uso:
-
-```bash
-curl "https://api.tinybird.co/v0/pipes/cases_summary.json?company_id=cmp_xyz789" \
-  -H "Authorization: Bearer $TINYBIRD_TOKEN"
-```
-
-### /risk_report
-
-Reporte de exposición por riesgo:
-
-```sql
--- risk_report.pipe
-NODE endpoint
-SQL >
-    %
-    SELECT
-        risk_level,
-        count,
-        exposure,
-        round(exposure / sum(exposure) OVER () * 100, 2) as percentage
-    FROM risk_distribution_mv
-    WHERE company_id = {{String(company_id, required=True)}}
-    ORDER BY risk_level DESC
-
-TYPE endpoint
-```
-
-### /trends
-
-Tendencias de movimientos:
-
-```sql
--- trends.pipe
-NODE endpoint
-SQL >
-    %
-    SELECT
-        day,
-        movement_count,
-        resolutions,
-        notifications,
-        avg(movement_count) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) as moving_avg_7d
-    FROM timeline_metrics_mv
-    WHERE company_id = {{String(company_id, required=True)}}
-    {% if defined(start_date) %}
-        AND day >= {{Date(start_date)}}
-    {% end %}
-    {% if defined(end_date) %}
-        AND day <= {{Date(end_date)}}
-    {% end %}
-    ORDER BY day
-
-TYPE endpoint
-```
-
-## Sincronización (clamo-sync)
-
-El servicio Rust `clamo-sync` sincroniza datos desde las bases de datos de tenant:
-
-```rust
-use sqlx::PgPool;
-use tinybird::Client as TinybirdClient;
-
-pub struct Syncer {
-    control_pool: PgPool,
-    tinybird: TinybirdClient,
-}
-
-impl Syncer {
-    pub async fn sync_all_tenants(&self) -> Result<SyncStats> {
-        let companies = self.get_active_companies().await?;
-        let mut stats = SyncStats::default();
-        
-        for company in companies {
-            match self.sync_tenant(&company).await {
-                Ok(tenant_stats) => stats.merge(tenant_stats),
-                Err(e) => {
-                    tracing::error!(
-                        company_id = %company.id,
-                        error = %e,
-                        "Failed to sync tenant"
-                    );
-                    stats.failed += 1;
-                }
-            }
-        }
-        
-        Ok(stats)
-    }
+    Sync -->|HTTP Events| Raw
+    Ingest -->|Kafka| Kafka
+    Upload --> Static
     
-    async fn sync_tenant(&self, company: &Company) -> Result<TenantStats> {
-        let tenant_pool = self.get_tenant_pool(&company.id).await?;
-        
-        // Obtener casos modificados desde último sync
-        let cases = sqlx::query_as!(
-            CaseRow,
-            r#"
-            SELECT * FROM cases
-            WHERE updated_at > $1
-            ORDER BY updated_at
-            LIMIT 10000
-            "#,
-            company.last_sync_at,
-        )
-        .fetch_all(&tenant_pool)
-        .await?;
-        
-        if cases.is_empty() {
-            return Ok(TenantStats::default());
-        }
-        
-        // Transformar a formato Tinybird
-        let rows: Vec<TinybirdCaseRow> = cases
-            .iter()
-            .map(|c| TinybirdCaseRow {
-                company_id: company.id.clone(),
-                case_id: c.id.clone(),
-                expediente: c.expediente.clone(),
-                // ... más campos
-            })
-            .collect();
-        
-        // Enviar a Tinybird
-        self.tinybird
-            .ingest("cases_ds", &rows)
-            .await?;
-        
-        // Actualizar marca de tiempo
-        self.update_last_sync(&company.id).await?;
-        
-        Ok(TenantStats {
-            cases_synced: cases.len(),
-        })
-    }
-}
-```
-
-## Dashboards
-
-### Componentes de Dashboard
-
-```typescript
-// Dashboard de cartera
-export function PortfolioDashboard({ companyId }: Props) {
-  const { data: summary } = useTinybirdQuery('cases_summary', { company_id: companyId });
-  const { data: risk } = useTinybirdQuery('risk_report', { company_id: companyId });
-  const { data: trends } = useTinybirdQuery('trends', { company_id: companyId });
-  
-  return (
-    <div className="grid grid-cols-3 gap-4">
-      <StatusCard data={summary} />
-      <RiskChart data={risk} />
-      <TrendChart data={trends} />
-    </div>
-  );
-}
-```
-
-### Hook de Tinybird
-
-```typescript
-import useSWR from 'swr';
-
-const TINYBIRD_URL = 'https://api.tinybird.co/v0/pipes';
-
-export function useTinybirdQuery<T>(
-  pipe: string,
-  params: Record<string, string>,
-) {
-  const queryString = new URLSearchParams(params).toString();
-  const url = `${TINYBIRD_URL}/${pipe}.json?${queryString}`;
-  
-  return useSWR<T>(url, async (url) => {
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${process.env.TINYBIRD_TOKEN}`,
-      },
-    });
+    Raw --> Consolidated
+    Kafka --> Consolidated
     
-    if (!response.ok) {
-      throw new Error('Tinybird query failed');
-    }
+    Consolidated --> Stats
+    Consolidated --> Trends
+    Consolidated --> Dist
+    Raw --> Search
     
-    const { data } = await response.json();
-    return data;
-  });
-}
+    Stats --> Clamy
+    Stats --> Luna
+    Stats --> Dashboards
 ```
 
-## Métricas Clave
+## Flujo de Datos
 
-| Métrica | Descripción | Query |
-|---------|-------------|-------|
-| Casos Activos | Total de casos en trámite | `SELECT count() FROM cases_ds WHERE status = 'EN_TRAMITE'` |
-| Exposición Total | Suma de montos demandados | `SELECT sum(claim_amount) FROM cases_ds WHERE status IN ('EN_TRAMITE', 'EN_EJECUCION')` |
-| Casos de Alto Riesgo | Casos con riesgo HIGH o CRITICAL | `SELECT count() FROM cases_ds WHERE risk_level IN ('HIGH', 'CRITICAL')` |
-| Movimientos/Día | Promedio de movimientos diarios | `SELECT avg(movement_count) FROM timeline_metrics_mv` |
-| Tiempo en Etapa | Duración promedio por etapa | Calculado desde `case_progress` |
+### clamo-sync (Rust)
 
-## Configuración
+El servicio principal de sincronización de datos que consolida más de 200 bases de datos Neon PostgreSQL en Tinybird.
 
-### Variables de Entorno
+**Características Clave**:
+- **Sync incremental** usando watermarks de `updated_at`
+- **Detección de esquema** con sync completo automático en cambios
+- **Detección de eliminaciones** vía reconciliación (intervalo configurable)
+- **Rate limiting** con backoff exponencial para límites de Tinybird
+- **Escalamiento horizontal** con concurrencia de workers configurable
 
-```bash
-# Tinybird
-TINYBIRD_TOKEN=p.eyJ...
-TINYBIRD_API_URL=https://api.tinybird.co
-
-# Sync
-SYNC_INTERVAL_SECONDS=300
-SYNC_BATCH_SIZE=10000
+**Flujo de Sync**:
+```mermaid
+sequenceDiagram
+    participant Supabase as Supabase Vault
+    participant Sync as clamo-sync
+    participant Neon as Neon DBs
+    participant TB as Tinybird
+    
+    Sync->>Supabase: Obtener connection strings
+    Supabase-->>Sync: Secrets desencriptados
+    
+    loop Para cada tenant
+        Sync->>Neon: Query cambios desde watermark
+        Neon-->>Sync: Registros cambiados
+        Sync->>TB: POST /events
+        TB-->>Sync: Ack
+        Sync->>Sync: Actualizar watermark
+    end
 ```
 
-### Despliegue de Pipes
+### clamo-ingest-go (Kafka)
 
-```bash
-# Usando Tinybird CLI
-tb push datasources/
-tb push pipes/
-tb push endpoints/
+Transmite eventos en tiempo real desde el pipeline de ingesta directamente a Tinybird vía Kafka.
+
+**Tablas**:
+- `cases_analytics` - Eventos de casos en tiempo real
+- `movements_analytics` - Notificaciones de movimientos
+- `milestones_analytics` - Logros de hitos
+
+## Configuración de Tinybird
+
+La configuración de Tinybird vive en el repositorio `clamo-clickhouse`.
+
+### Datasources
+
+| Datasource | Fuente | Descripción |
+|------------|--------|-------------|
+| `legal_cases` | clamo-sync | Datos core de casos |
+| `movements` | clamo-sync | Movimientos/acciones de casos |
+| `parties` | clamo-sync | Partes del caso (demandante/demandado) |
+| `decisions` | clamo-sync | Decisiones judiciales |
+| `case_states` | clamo-sync | Snapshots de estado actual |
+| `cases_analytics` | Kafka | Eventos de casos en tiempo real |
+| `movements_analytics` | Kafka | Eventos de movimientos en tiempo real |
+| `cases_sync_consolidated` | ETL | Output del ETL en Rust |
+| `generales_mibanco` | Static | Datos de referencia |
+| `padron_ruc` | Static | Datos de validación de RUC |
+
+### Materializaciones
+
+**`cases_consolidated_mv`** - Vista pre-computada que desnormaliza datos de casos con:
+- Estado más reciente
+- Información de partes
+- Conteos de movimientos
+- Cálculos de riesgo
+- Progreso de etapas
+
+### Endpoints API
+
+| Endpoint | Descripción |
+|----------|-------------|
+| `api_cases_consolidated` | Lista completa de casos consolidados |
+| `api_case_detail` | Caso individual con todas las relaciones |
+| `api_cases_stats` | KPIs agregados |
+| `api_cases_distribution` | Distribución por dimensión |
+| `api_cases_trends` | Tendencias de series temporales |
+| `api_expedientes` | Listado de casos filtrado |
+| `api_buscar` | Búsqueda de texto completo |
+| `api_estadisticas` | Estadísticas globales |
+| `api_analisis_juez` | Análisis de rendimiento de jueces |
+| `api_analisis_tipologia` | Tasas de éxito por tipo de caso |
+
+## Integración MCP
+
+Clamy y Luna acceden a Tinybird a través del servidor MCP (Model Context Protocol).
+
+```mermaid
+flowchart LR
+    subgraph Assistant [AI Assistant]
+        Clamy[Clamy]
+        Luna[Luna]
+    end
+    
+    subgraph MCP [Servidor MCP]
+        Server[Tinybird MCP]
+        Tools[Definiciones de Tools]
+    end
+    
+    subgraph TB [Tinybird]
+        Endpoints[API Endpoints]
+    end
+    
+    Clamy -->|Todas las Tools| Server
+    Luna -->|Solo Safe Tools| Server
+    Server --> Tools
+    Tools --> Endpoints
 ```
 
-## Próximos Pasos
+**Luna Safe Tools** (whitelist para asistente global):
+- `api_estadisticas` - KPIs globales
+- `api_por_zona` - Distribución geográfica
+- `api_expedientes` - Listado filtrado
+- `api_buscar` - Búsqueda de texto
+- `api_estados_caso` - Distribución de estados
+- `api_casos_atencion` - Casos críticos
+- `api_cases_trends` - Tendencias temporales
+- `api_cases_distribution` - Distribución dimensional
 
-<CardGroup cols={2}>
-  <Card
-    title="Seguridad"
-    icon="shield"
-    href="/arquitectura/seguridad"
-  >
-    Arquitectura de seguridad.
-  </Card>
-  <Card
-    title="Pipeline de Datos"
-    icon="database"
-    href="/arquitectura/pipeline-datos"
-  >
-    Flujo de datos desde el CEJ.
-  </Card>
-</CardGroup>
+**Luna Blocked Tools** (pueden generar errores):
+- `text_to_sql` - Generación de SQL personalizado
+- `execute_query` - Ejecución de SQL personalizado
+- `explore_data` - Queries problemáticas
 
+## Integración con clamo-dashboards
+
+El servicio de dashboards basado en Rust consulta Tinybird para datos de widgets:
+
+```mermaid
+flowchart LR
+    WebApp[clamo-web-app] -->|API| Dashboards[clamo-dashboards<br/>Rust/Axum]
+    Dashboards -->|HTTP| Tinybird[Tinybird<br/>Endpoints]
+    Tinybird -->|JSON| Dashboards
+    Dashboards -->|Widgets| WebApp
+```
+
+**Características del Dashboard**:
+- Layouts de widgets personalizables
+- Resultados de queries cacheados
+- Aislamiento multi-tenant
+- Actualizaciones en tiempo real
+
+## Observabilidad
+
+### Métricas de clamo-sync
+
+Métricas de Prometheus expuestas en `/metrics`:
+- `sync_records_total` - Registros sincronizados por tenant
+- `sync_duration_seconds` - Histograma de duración de sync
+- `sync_errors_total` - Conteos de errores por tipo
+- `tinybird_rate_limit_hits` - Encuentros con rate limit
+
+### Alertas
+
+Integración con Alertmanager envía notificaciones vía clamo-mailing:
+- Fallos de sync
+- Advertencias de rate limit
+- Detecciones de cambios de esquema
+- Discrepancias de reconciliación
+
+## Estructura del Proyecto
+
+```
+clamo-clickhouse/
+├── connections/
+│   └── kafka_analytics.connection    # Config de conexión Kafka
+├── datasources/
+│   ├── legal_cases.datasource
+│   ├── movements.datasource
+│   ├── parties.datasource
+│   ├── decisions.datasource
+│   ├── case_states.datasource
+│   ├── cases_analytics.datasource    # Kafka
+│   └── ...
+├── endpoints/
+│   ├── api_cases_consolidated.pipe
+│   ├── api_cases_stats.pipe
+│   ├── api_cases_trends.pipe
+│   └── ...
+├── materializations/
+│   └── cases_consolidated.pipe
+└── fixtures/
+    └── generales_mibanco.ndjson      # Datos de prueba
+```
+
+## Documentación Relacionada
+
+- [Servicio clamo-sync](/es/servicios/clamo-sync)
+- [Servicio clamo-dashboards](/es/servicios/clamo-dashboards)
+- [Arquitectura de Asistentes IA](/es/arquitectura/asistentes-ia)

@@ -9,13 +9,18 @@ Esta guía explica cómo configurar el entorno de desarrollo local de Clamo usan
 
 ## Prerrequisitos
 
-Antes de comenzar, asegúrate de tener instalado:
+### Software Requerido
 
-- **uv** (gestor de paquetes Python) - [Instalación](https://docs.astral.sh/uv/)
-- **pnpm** - `npm install -g pnpm`
-- **Docker** (para servicios como CEJ connector)
-- **Node.js 20+**
-- **Python 3.10+**
+| Software | Versión | Propósito |
+|----------|---------|----------|
+| Node.js | 20+ | Frontend y servicios TypeScript |
+| pnpm | 10+ | Gestor de paquetes |
+| Python | 3.11+ | CEJ connector y agentes IA |
+| uv | Latest | Gestor de paquetes Python |
+| Go | 1.22+ | Worker de ingestión (opcional) |
+| Rust | Latest | clamo-sync y dashboards (opcional) |
+| Docker | Latest | Servicios contenerizados |
+| Git | Latest | Control de versiones |
 
 ### Instalar uv
 

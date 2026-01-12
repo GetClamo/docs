@@ -9,13 +9,18 @@ This guide explains how to configure the Clamo local development environment usi
 
 ## Prerequisites
 
-Before starting, make sure you have installed:
+### Required Software
 
-- **uv** (Python package manager) - [Installation](https://docs.astral.sh/uv/)
-- **pnpm** - `npm install -g pnpm`
-- **Docker** (for services like CEJ connector)
-- **Node.js 20+**
-- **Python 3.10+**
+| Software | Version | Purpose |
+|----------|---------|---------|
+| Node.js | 20+ | Frontend and TypeScript services |
+| pnpm | 10+ | Package manager |
+| Python | 3.11+ | CEJ connector and AI agents |
+| uv | Latest | Python package manager |
+| Go | 1.22+ | Ingestion worker (optional) |
+| Rust | Latest | clamo-sync and dashboards (optional) |
+| Docker | Latest | Containerized services |
+| Git | Latest | Version control |
 
 ### Install uv
 
@@ -286,22 +291,42 @@ CEJ_REMOTE_URL=https://staging-cej.getclamo.com/api
   </Accordion>
 </AccordionGroup>
 
+## IDE Configuration
+
+### VS Code
+
+Recommended extensions:
+
+```json
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "prisma.prisma",
+    "bradlc.vscode-tailwindcss",
+    "ms-python.python",
+    "golang.go",
+    "rust-lang.rust-analyzer"
+  ]
+}
+```
+
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card
+    title="Debugging"
+    icon="bug"
+    href="/en/guides/debugging"
+  >
+    Debugging and troubleshooting guide.
+  </Card>
   <Card
     title="Services"
     icon="server"
     href="/en/services/catalog"
   >
     Detailed documentation of each service.
-  </Card>
-  <Card
-    title="API Reference"
-    icon="code"
-    href="/en/api-reference/introduction"
-  >
-    Available endpoints for integration.
   </Card>
 </CardGroup>
 

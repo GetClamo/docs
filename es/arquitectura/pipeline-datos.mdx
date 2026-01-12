@@ -5,400 +5,241 @@ description: Arquitectura del flujo de datos desde el CEJ hasta la base de datos
 
 # Pipeline de Datos
 
-El pipeline de datos de Clamo automatiza la extracción, normalización e ingesta de información desde el Centro de Justicia Electrónico (CEJ) del Poder Judicial peruano.
+El pipeline de datos de Clamo automatiza la extracción, normalización e ingesta de información del Centro de Justicia Electrónico de Perú (CEJ).
 
-## Arquitectura General
+## Visión General del Pipeline
 
 ```mermaid
 flowchart TB
-    subgraph Scraping [Extracción - clamo-cej-connector]
-        Scheduler[Scheduler]
-        Browser[Steel Browser]
-        Parser[HTML Parser]
-        LLM[LLM Normalizer]
+    subgraph Discovery [Capa de Descubrimiento]
+        CejDiscovery[clamo-cej-discovery<br/>Búsqueda Masiva]
     end
     
-    subgraph Queue [Cola de Mensajes]
-        Kafka[(Kafka)]
+    subgraph Extraction [Capa de Extracción]
+        CejConnector[clamo-cej-connector<br/>Scraping + LLM]
     end
     
-    subgraph Ingestion [Ingesta - clamo-ingest-go]
-        Consumer[Kafka Consumer]
-        Validator[Validator]
-        BatchWriter[Batch Writer]
+    subgraph EventGateway [Event Gateway]
+        ClamoAPI[clamo-api<br/>Event Router]
     end
     
-    subgraph Storage [Almacenamiento]
-        TenantDB[(Tenant DB)]
-        Analytics[(Tinybird)]
+    subgraph Messaging [Cola de Mensajes]
+        Kafka[(Kafka Topics)]
     end
     
-    subgraph Sync [Sincronización - clamo-sync]
-        ChangeDetector[Change Detector]
-        TinybirdWriter[Tinybird Writer]
+    subgraph Ingestion [Capa de Ingesta]
+        IngestGo[clamo-ingest-go<br/>Batch Insert]
     end
     
-    Scheduler --> Browser
-    Browser --> Parser
-    Parser --> LLM
-    LLM --> Kafka
-    Kafka --> Consumer
-    Consumer --> Validator
-    Validator --> BatchWriter
-    BatchWriter --> TenantDB
-    TenantDB --> ChangeDetector
-    ChangeDetector --> TinybirdWriter
-    TinybirdWriter --> Analytics
+    subgraph Storage [Capa de Almacenamiento]
+        S3[(S3/MinIO<br/>Envelopes)]
+        Postgres[(PostgreSQL<br/>Cases DB)]
+        Redis[(Redis<br/>Taxonomy Cache)]
+    end
+    
+    CejDiscovery -->|Nuevos RUCs| CejConnector
+    CejConnector -->|CASE_READY| Kafka
+    Kafka --> ClamoAPI
+    ClamoAPI -->|cases-ingest| Kafka
+    Kafka --> IngestGo
+    CejConnector -->|Envelopes| S3
+    IngestGo -->|Fetch| S3
+    IngestGo -->|COPY| Postgres
+    IngestGo -.->|Cache| Redis
 ```
 
 ## Componentes
 
+### clamo-cej-discovery
+
+**Propósito**: Descubrimiento masivo de nuevos identificadores de casos (RUCs) del CEJ.
+
+**Tecnología**: Python, Playwright, Steel.dev, Temporal
+
+**Características Clave**:
+- Búsqueda masiva por números correlativos (1-99999)
+- Detención inteligente cuando la tasa de "no encontrado" es alta
+- Almacenamiento incremental en CSV a MinIO
+- Notificaciones en tiempo real vía Ably cuando se encuentran casos
+
+**Flujo**:
+1. Iterar a través de números correlativos
+2. Buscar en el CEJ cada correlativo
+3. Extraer metadatos básicos del caso
+4. Almacenar resultados en CSV en MinIO
+5. Notificar a sistemas downstream sobre nuevos casos
+
 ### clamo-cej-connector
 
-Servicio Python que extrae datos del CEJ usando browser automation.
+**Propósito**: Extracción completa de casos con automatización de navegador y normalización basada en LLM.
 
-| Tecnología | Uso |
-|------------|-----|
-| Python 3.11 | Runtime |
-| Temporal | Orquestación de workflows |
-| Steel | Browser automation cloud |
-| Playwright | Control del navegador |
-| Anthropic | Normalización con LLM |
+**Tecnología**: Python, FastAPI, Playwright, Steel.dev, Temporal, Anthropic (Claude)
 
-#### Flujo de Extracción
+**Etapas del Pipeline de Datos**:
+
+| Etapa | Actividad | Descripción |
+|-------|-----------|-------------|
+| Browser | `cej_browser_search` | Sesión Steel, resolución de CAPTCHA, captura de HTML |
+| Parsing | `cej_parse_html` | Convertir HTML a DTOs `CejHtmlDetail` |
+| Documentos | `cej_download_documents` | Descargar PDFs, extracción con LlamaParse |
+| LLM | `cej_llm_*` | Resúmenes, clasificaciones, hitos |
+| DB | `cej_ingest_normalized_case` | Upsert vía `CejIngestor` |
+
+**Topología de Workers**:
 
 ```mermaid
-sequenceDiagram
-    participant S as Scheduler
-    participant T as Temporal
-    participant C as Connector
-    participant Steel as Steel Browser
-    participant CEJ as CEJ Website
-    participant LLM as Anthropic
-
-    S->>T: Start workflow (RUC)
-    T->>C: Execute activity
-    C->>Steel: Create session
-    Steel->>CEJ: Navigate to search
-    Steel->>CEJ: Fill RUC form
-    Steel->>CEJ: Submit search
-    CEJ-->>Steel: Results page
-    Steel-->>C: HTML content
-    C->>C: Parse HTML
-    C->>LLM: Normalize data
-    LLM-->>C: Structured JSON
-    C->>T: Return cases
+flowchart LR
+    subgraph Workers [Worker Pods]
+        WF[Workflow Workers<br/>cej-coordinator<br/>cej-expediente]
+        BR[Browser Workers<br/>cej-browser]
+        LLM[LLM Workers<br/>cej-llm]
+        ING[Ingest Workers<br/>cej-ingest]
+    end
+    
+    subgraph Queues [Task Queues]
+        Q1[cej-coordinator]
+        Q2[cej-expediente]
+        Q3[cej-browser]
+        Q4[cej-llm]
+        Q5[cej-ingest]
+    end
+    
+    WF --> Q1
+    WF --> Q2
+    BR --> Q3
+    LLM --> Q4
+    ING --> Q5
 ```
 
-#### Normalización con LLM
-
-El HTML crudo del CEJ se procesa con Claude para extraer información estructurada:
-
-```python
-# Ejemplo simplificado
-async def normalize_movement(raw_html: str) -> Movement:
-    prompt = f"""
-    Extrae la información del siguiente movimiento procesal del CEJ.
-    
-    HTML:
-    {raw_html}
-    
-    Responde en JSON con el siguiente formato:
-    {{
-        "date": "YYYY-MM-DD",
-        "description": "...",
-        "resolution": "número de resolución o null",
-        "classification": "RESOLUCION|ESCRITO|NOTIFICACION|AUDIENCIA|OTRO",
-        "isNotification": true/false,
-        "summary": "resumen en una oración"
-    }}
-    """
-    
-    response = await anthropic.messages.create(
-        model="claude-3-haiku-20240307",
-        messages=[{"role": "user", "content": prompt}],
-    )
-    
-    return Movement(**json.loads(response.content[0].text))
-```
+**Workflows de Temporal**:
+- `CejCaseJobWorkflow` - Orquestador de nivel superior, genera workflows hijos
+- `CejExpedienteWorkflow` - Flujo completo de extracción para un caso individual
 
 ### clamo-ingest-go
 
-Worker de alta performance en Go para inserción batch.
+**Propósito**: Inserción batch de alto rendimiento en la base de datos.
 
-| Tecnología | Uso |
-|------------|-----|
-| Go 1.22 | Runtime |
-| Kafka | Consumo de eventos |
-| pgx | Driver PostgreSQL |
-| COPY | Inserción batch |
+**Tecnología**: Go 1.25+, Kafka, Temporal, PostgreSQL (pgx), Redis
 
-#### Procesamiento de Eventos
+**Optimizaciones de Rendimiento**:
+- PostgreSQL `COPY FROM` para inserciones masivas (10-100x más rápido)
+- Cache de taxonomía en Redis reduce consultas a DB en 90%
+- Connection pooling (20 conexiones máximas)
+- Reintentos automáticos con backoff exponencial
 
-```go
-type CaseReadyEvent struct {
-    CompanyID string    `json:"companyId"`
-    Cases     []Case    `json:"cases"`
-    Timestamp time.Time `json:"timestamp"`
-}
+**Flujo de Datos**:
 
-func (w *Worker) ProcessBatch(events []CaseReadyEvent) error {
-    // Agrupar por tenant
-    byTenant := make(map[string][]Case)
-    for _, event := range events {
-        byTenant[event.CompanyID] = append(
-            byTenant[event.CompanyID], 
-            event.Cases...,
-        )
-    }
+```mermaid
+sequenceDiagram
+    participant CEJ as clamo-cej-connector
+    participant Kafka as Kafka
+    participant API as clamo-api
+    participant Ingest as clamo-ingest-go
+    participant S3 as S3/MinIO
+    participant DB as PostgreSQL
     
-    // Insertar por tenant
-    for companyID, cases := range byTenant {
-        conn, err := w.getTenantConnection(companyID)
-        if err != nil {
-            return err
-        }
-        
-        err = w.batchInsert(conn, cases)
-        if err != nil {
-            return err
-        }
-    }
-    
-    return nil
-}
-
-func (w *Worker) batchInsert(conn *pgx.Conn, cases []Case) error {
-    // Usar COPY para inserción masiva
-    _, err := conn.CopyFrom(
-        context.Background(),
-        pgx.Identifier{"cases"},
-        []string{"id", "expediente", "plaintiff", "defendant", ...},
-        pgx.CopyFromSlice(len(cases), func(i int) ([]any, error) {
-            c := cases[i]
-            return []any{c.ID, c.Expediente, c.Plaintiff, c.Defendant, ...}, nil
-        }),
-    )
-    return err
-}
+    CEJ->>Kafka: CASE_READY (cej-events)
+    Kafka->>API: Consume event
+    API->>API: Validar + auditar
+    API->>Kafka: Publicar (cases-ingest)
+    Kafka->>Ingest: Consume event
+    Ingest->>S3: Fetch envelope
+    S3-->>Ingest: Datos del caso
+    Ingest->>DB: COPY batch insert
+    Note over DB: Cases, Progress,<br/>Movements, Milestones
 ```
 
-### clamo-sync
+**Tablas Insertadas**:
+- `Cases` - UPSERT en expediente + company_id
+- `CaseProgress` - Línea de tiempo de etapa/subetapa
+- `Movements` - Acciones del expediente
+- `StatusSnapshots` - Estado point-in-time
+- `CaseMilestones` - Eventos importantes
 
-Servicio Rust que sincroniza datos hacia Tinybird para analytics.
+## Pipeline de Normalización LLM
 
-```rust
-// Detector de cambios usando CDC
-async fn sync_changes(pool: &PgPool, tinybird: &TinybirdClient) -> Result<()> {
-    // Obtener cambios desde último sync
-    let changes = sqlx::query_as!(
-        CaseChange,
-        r#"
-        SELECT * FROM case_changes
-        WHERE synced_at IS NULL
-        ORDER BY changed_at
-        LIMIT 1000
-        "#
-    )
-    .fetch_all(pool)
-    .await?;
+El connector usa Anthropic Claude para normalización multi-etapa:
+
+```mermaid
+flowchart LR
+    subgraph Input [Datos Crudos]
+        HTML[CEJ HTML]
+        PDFs[Documentos PDF]
+    end
     
-    if changes.is_empty() {
-        return Ok(());
-    }
+    subgraph LLM [Etapas LangChain]
+        DocSum[Resúmenes de<br/>Documentos]
+        MovClass[Clasificación de<br/>Movimientos]
+        MileMap[Mapeo de<br/>Hitos]
+        Timeline[Segmentación de<br/>Timeline]
+        Final[Síntesis de<br/>Payload Final]
+    end
     
-    // Enviar a Tinybird
-    tinybird.ingest("cases", &changes).await?;
+    subgraph Output [Normalizado]
+        Envelope[Case Envelope]
+    end
     
-    // Marcar como sincronizados
-    let ids: Vec<_> = changes.iter().map(|c| c.id).collect();
-    sqlx::query!(
-        "UPDATE case_changes SET synced_at = NOW() WHERE id = ANY($1)",
-        &ids
-    )
-    .execute(pool)
-    .await?;
-    
-    Ok(())
-}
+    HTML --> DocSum
+    PDFs --> DocSum
+    DocSum --> MovClass
+    MovClass --> MileMap
+    MileMap --> Timeline
+    Timeline --> Final
+    Final --> Envelope
 ```
 
-## Eventos Kafka
+**Etapas LLM**:
+1. **Resúmenes de Documentos** - Extraer información clave de PDFs
+2. **Clasificación de Movimientos** - Categorizar acciones del caso
+3. **Mapeo de Hitos** - Identificar eventos importantes
+4. **Segmentación de Timeline** - Dividir en etapas/subetapas
+5. **Síntesis Final** - Producir envelope normalizado
 
-### Tópicos
+## Estrategia de Caching
 
-| Tópico | Productor | Consumidor | Descripción |
-|--------|-----------|------------|-------------|
-| `cej.case.ready` | cej-connector | ingest-go | Casos listos para insertar |
-| `cej.case.error` | cej-connector | monitoring | Errores de extracción |
-| `case.updated` | ingest-go | sync | Casos actualizados |
+El connector CEJ implementa caching multi-nivel:
 
-### Formato de Eventos
+| Configuración | Default | Descripción |
+|---------------|---------|-------------|
+| `CACHE_ENABLED` | `true` | Habilitar/deshabilitar caching |
+| `CACHE_BACKEND` | `memory` | `memory` o `redis`/`valkey` |
+| `CACHE_TTL_SECONDS` | `1200` | TTL default de 20 minutos |
+| `CACHE_FORCE_REFRESH_PARAM` | `force_refresh` | Query param para bypass de cache |
 
-```json
-{
-  "eventId": "evt_abc123",
-  "eventType": "cej.case.ready",
-  "timestamp": "2025-01-02T12:00:00Z",
-  "payload": {
-    "companyId": "cmp_xyz789",
-    "monitoredEntityId": "ent_123",
-    "cases": [
-      {
-        "expediente": "00001-2024-0-1234-JR-LA-01",
-        "plaintiff": "Juan Pérez",
-        "defendant": "Empresa S.A.C.",
-        "movements": [...]
-      }
-    ]
-  },
-  "metadata": {
-    "source": "cej-connector",
-    "version": "1.0"
-  }
-}
-```
+Artefactos cacheados incluyen:
+- HTML de sesión del navegador
+- Detalles del caso parseados
+- Documentos descargados
+- Resultados de normalización LLM
 
-## Scheduling
+## Observabilidad
 
-El scheduler de Temporal coordina la extracción:
-
-```python
-# Workflow de extracción
-@workflow.defn
-class ExtractCasesWorkflow:
-    @workflow.run
-    async def run(self, company_id: str, ruc: str) -> ExtractResult:
-        # Crear sesión de browser
-        session = await workflow.execute_activity(
-            create_browser_session,
-            start_to_close_timeout=timedelta(minutes=2),
-        )
-        
-        try:
-            # Buscar casos por RUC
-            cases = await workflow.execute_activity(
-                search_cases_by_ruc,
-                args=[session, ruc],
-                start_to_close_timeout=timedelta(minutes=10),
-            )
-            
-            # Normalizar con LLM
-            normalized = await workflow.execute_activity(
-                normalize_cases,
-                args=[cases],
-                start_to_close_timeout=timedelta(minutes=5),
-            )
-            
-            # Publicar a Kafka
-            await workflow.execute_activity(
-                publish_cases,
-                args=[company_id, normalized],
-                start_to_close_timeout=timedelta(minutes=1),
-            )
-            
-            return ExtractResult(success=True, count=len(normalized))
-            
-        finally:
-            await workflow.execute_activity(
-                close_browser_session,
-                args=[session],
-            )
-```
-
-### Frecuencia de Extracción
-
-| Plan | Frecuencia | Entidades |
-|------|------------|-----------|
-| Free | Diaria | 5 |
-| Pro | Cada 4 horas | 50 |
-| Enterprise | Cada hora | Ilimitadas |
-
-## Manejo de Errores
-
-### Reintentos
-
-```python
-# Política de reintentos en Temporal
-retry_policy = RetryPolicy(
-    initial_interval=timedelta(seconds=10),
-    maximum_interval=timedelta(minutes=10),
-    backoff_coefficient=2.0,
-    maximum_attempts=5,
-    non_retryable_error_types=["InvalidRUCError", "PermissionDeniedError"],
-)
-```
-
-### Dead Letter Queue
-
-Eventos que fallan después de reintentos van a DLQ:
-
-```python
-async def handle_failed_event(event: CaseReadyEvent, error: Exception):
-    await kafka.produce(
-        topic="cej.case.dlq",
-        value={
-            "originalEvent": event,
-            "error": str(error),
-            "failedAt": datetime.utcnow().isoformat(),
-            "attempts": event.metadata.get("attempts", 0) + 1,
-        },
-    )
-```
-
-## Monitoreo
+### Tracing y Logging
+- **Logfire** - Spans desde FastAPI + actividades Temporal
+- **LangSmith** - Tracing de etapas LangChain (resúmenes, clasificaciones)
 
 ### Métricas
+- Tiempos por etapa: `browser_time`, `http_time`, `llm_time`, `db_time`
+- Profundidad de cola para load shedding
+- Latencia de ejecución de workflow tasks (objetivo menor a 1s)
 
-| Métrica | Descripción |
-|---------|-------------|
-| `cej_extraction_duration_seconds` | Tiempo de extracción por RUC |
-| `cej_cases_extracted_total` | Casos extraídos |
-| `cej_movements_extracted_total` | Movimientos extraídos |
-| `ingest_batch_size` | Tamaño de batch de inserción |
-| `ingest_latency_seconds` | Latencia de ingesta |
-| `sync_lag_seconds` | Retraso de sincronización |
+### Search Attributes (Temporal)
+- `TenantId` - Identificador de empresa
+- `ExpedienteId` - Identificador de caso
+- `ForceRefresh` - Flag de bypass de cache
+- `CacheHit` - Cache hit/miss
+- `MovementCount` - Número de movimientos
 
-### Alertas
+## Recomendaciones de Escalamiento
 
-```yaml
-# Prometheus alerting rules
-groups:
-  - name: pipeline
-    rules:
-      - alert: HighExtractionLatency
-        expr: histogram_quantile(0.95, cej_extraction_duration_seconds) > 300
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Extracción del CEJ lenta"
-          
-      - alert: IngestLagHigh
-        expr: kafka_consumer_lag > 10000
-        for: 10m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Lag de ingesta alto"
-```
+Para 150 envíos de jobs concurrentes:
+- ~5 pods de workflow
+- ~15 pods de actividad (divididos entre browser/LLM/ingest)
+- Todos los workers usan la misma imagen de contenedor
+- La variable de entorno `WORKER_ROLE` determina la asignación de cola
 
-## Próximos Pasos
+## Documentación Relacionada
 
-<CardGroup cols={2}>
-  <Card
-    title="Asistentes IA"
-    icon="robot"
-    href="/arquitectura/asistentes-ia"
-  >
-    Arquitectura de los agentes LangGraph.
-  </Card>
-  <Card
-    title="Analytics"
-    icon="chart-line"
-    href="/arquitectura/analiticas"
-  >
-    Pipeline de analytics con Tinybird.
-  </Card>
-</CardGroup>
-
+- [Servicio clamo-cej-connector](/es/servicios/clamo-cej-connector)
+- [Servicio clamo-cej-discovery](/es/servicios/clamo-cej-discovery)
+- [Servicio clamo-ingest-go](/es/servicios/clamo-ingest-go)

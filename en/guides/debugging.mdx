@@ -1,18 +1,18 @@
 ---
-title: Depuración
-description: Guía de troubleshooting y depuración para servicios de Clamo
+title: Debugging
+description: Troubleshooting and debugging guide for Clamo services
 ---
 
-# Guía de Depuración
+# Debugging Guide
 
-Esta guía proporciona técnicas y herramientas para depurar los diferentes servicios de Clamo.
+This guide provides techniques and tools for debugging the different Clamo services.
 
-## Logs por Servicio
+## Logs by Service
 
-### Ubicaciones de Logs
+### Log Locations
 
-| Servicio | Ubicación | Formato |
-|----------|-----------|---------|
+| Service | Location | Format |
+|---------|----------|--------|
 | clamo-web-app | Terminal / Browser Console | JSON |
 | clamo-tenant | Terminal stdout | JSON |
 | clamo-cases | Terminal stdout | JSON |
@@ -20,23 +20,23 @@ Esta guía proporciona técnicas y herramientas para depurar los diferentes serv
 | clamo-ingest-go | Docker logs | Structured |
 | Temporal | http://localhost:8233 | Web UI |
 
-### Ver Logs en Tiempo Real
+### View Logs in Real Time
 
 ```bash
-# Servicios TypeScript (desarrollo)
+# TypeScript services (development)
 cd clamo-tenant && pnpm dev
 
-# Servicios Docker
+# Docker services
 docker logs -f clamo-cej-connector
 
-# Todos los servicios Docker
+# All Docker services
 docker-compose logs -f
 
-# Filtrar por nivel
+# Filter by level
 docker logs clamo-cej-connector 2>&1 | grep ERROR
 ```
 
-## Depuración de Base de Datos
+## Database Debugging
 
 ### Prisma Studio
 
@@ -45,26 +45,26 @@ docker logs clamo-cej-connector 2>&1 | grep ERROR
 cd clamo-database
 npx prisma studio --schema=prisma/control/schema.prisma
 
-# Tenant database (requiere connection string)
+# Tenant database (requires connection string)
 DATABASE_URL="postgresql://..." npx prisma studio --schema=prisma/tenant/schema.prisma
 ```
 
-### Queries Directas con psql
+### Direct Queries with psql
 
 ```bash
-# Conectar a control DB
+# Connect to control DB
 psql $CONTROL_DATABASE_URL
 
-# Queries útiles
+# Useful queries
 SELECT * FROM "Company" ORDER BY "createdAt" DESC LIMIT 10;
 SELECT * FROM "User" WHERE "companyId" = 'cmp_xxx';
 SELECT * FROM "CompanyDatabase" WHERE status = 'active';
 ```
 
-### Verificar Estado de Tenant
+### Verify Tenant Status
 
 ```sql
--- Ver todas las empresas y su estado de DB
+-- View all companies and their DB status
 SELECT 
   c.id,
   c.name,
@@ -76,11 +76,11 @@ LEFT JOIN "CompanyDatabase" cd ON c.id = cd."companyId"
 ORDER BY c."createdAt" DESC;
 ```
 
-## Depuración de APIs
+## API Debugging
 
 ### Postman Collection
 
-Importa la colección de Postman desde:
+Import the Postman collection from:
 ```
 clamo-commons/postman/Clamo-API.postman_collection.json
 ```
@@ -91,18 +91,18 @@ clamo-commons/postman/Clamo-API.postman_collection.json
 # Health check
 curl http://localhost:4001/health | jq
 
-# Obtener usuario actual
+# Get current user
 curl http://localhost:4001/v1/me \
   -H "Authorization: Bearer $TOKEN" \
   -H "x-clamo-session: $SESSION" | jq
 
-# Listar casos
+# List cases
 curl "http://localhost:4000/v1/cases?limit=5" \
   -H "Authorization: Bearer $TOKEN" \
   -H "x-clamo-session: $SESSION" | jq
 ```
 
-### Generar Session Token para Testing
+### Generate Session Token for Testing
 
 ```typescript
 // scripts/generate-session.ts
@@ -120,73 +120,73 @@ const session = {
 console.log(encode(JSON.stringify(session)));
 ```
 
-## Depuración de Temporal Workflows
+## Temporal Workflow Debugging
 
 ### Temporal Web UI
 
-Accede a http://localhost:8233 para:
-- Ver workflows en ejecución
-- Inspeccionar historial de eventos
-- Reiniciar workflows fallidos
-- Ver métricas
+Access http://localhost:8233 to:
+- View running workflows
+- Inspect event history
+- Restart failed workflows
+- View metrics
 
-### CLI de Temporal
+### Temporal CLI
 
 ```bash
-# Listar workflows
+# List workflows
 temporal workflow list --namespace clamo-cej
 
-# Ver detalle de workflow
+# View workflow details
 temporal workflow show --workflow-id extract-ruc-20123456789
 
-# Terminar workflow
+# Terminate workflow
 temporal workflow terminate --workflow-id extract-ruc-20123456789
 
-# Ver historial
+# View history
 temporal workflow show --workflow-id extract-ruc-20123456789 --output json | jq
 ```
 
-## Depuración de Kafka
+## Kafka Debugging
 
 ### Kafka UI
 
-Si usas Docker Compose, accede a http://localhost:8080 (Kafka UI).
+If using Docker Compose, access http://localhost:8080 (Kafka UI).
 
-### CLI de Kafka
+### Kafka CLI
 
 ```bash
-# Listar topics
+# List topics
 kafka-topics.sh --bootstrap-server localhost:9092 --list
 
-# Consumir mensajes
+# Consume messages
 kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 \
   --topic cej.case.ready \
   --from-beginning
 
-# Ver offsets de consumer group
+# View consumer group offsets
 kafka-consumer-groups.sh \
   --bootstrap-server localhost:9092 \
   --group clamo-ingest \
   --describe
 ```
 
-## Depuración de Agentes IA
+## AI Agent Debugging
 
 ### LangSmith Integration
 
-1. Configura las variables de entorno:
+1. Configure environment variables:
 ```bash
 LANGCHAIN_TRACING_V2=true
 LANGCHAIN_API_KEY=ls__...
 LANGCHAIN_PROJECT=clamo-dev
 ```
 
-2. Accede a https://smith.langchain.com para ver:
-   - Traces de ejecución
-   - Inputs/outputs de LLM
-   - Latencias
-   - Errores
+2. Access https://smith.langchain.com to view:
+   - Execution traces
+   - LLM inputs/outputs
+   - Latencies
+   - Errors
 
 ### LangGraph Studio
 
@@ -195,37 +195,37 @@ cd ask-clamo
 langgraph dev --port 8123
 ```
 
-Accede a http://localhost:8123 para:
-- Visualizar el grafo
-- Ejecutar pruebas interactivas
-- Inspeccionar estado
+Access http://localhost:8123 to:
+- Visualize the graph
+- Run interactive tests
+- Inspect state
 
-## Errores Comunes
+## Common Errors
 
 ### UNAUTHORIZED (401)
 
-**Síntomas**: API retorna 401 en todas las requests.
+**Symptoms**: API returns 401 on all requests.
 
-**Causas y Soluciones**:
+**Causes and Solutions**:
 
 ```bash
-# 1. Token expirado - regenerar
-# En tu app, implementa refresh automático
+# 1. Expired token - regenerate
+# In your app, implement automatic refresh
 
-# 2. Session token malformado
-# Verificar que esté en base64url
+# 2. Malformed session token
+# Verify it's in base64url format
 echo $SESSION | base64 -d
 
-# 3. Usuario no existe en Clamo
-# Verificar en DB
+# 3. User doesn't exist in Clamo
+# Verify in DB
 psql $CONTROL_DATABASE_URL -c "SELECT * FROM \"User\" WHERE email = 'user@example.com'"
 ```
 
 ### COMPANY_NOT_READY (422)
 
-**Síntomas**: No se puede acceder a datos del tenant.
+**Symptoms**: Cannot access tenant data.
 
-**Diagnóstico**:
+**Diagnosis**:
 
 ```sql
 SELECT 
@@ -238,83 +238,82 @@ LEFT JOIN "CompanyDatabase" cd ON c.id = cd."companyId"
 WHERE c.id = 'cmp_xxx';
 ```
 
-**Soluciones**:
-1. Si `databaseStatus = 'provisioning'`: esperar
-2. Si `databaseStatus = 'failed'`: revisar logs de clamo-tenant
-3. Re-provisionar manualmente si es necesario
+**Solutions**:
+1. If `databaseStatus = 'provisioning'`: wait
+2. If `databaseStatus = 'failed'`: check clamo-tenant logs
+3. Re-provision manually if necessary
 
 ### Connection Refused
 
-**Síntomas**: No se puede conectar a un servicio.
+**Symptoms**: Cannot connect to a service.
 
 **Checklist**:
 
 ```bash
-# 1. Verificar que el servicio está corriendo
+# 1. Verify the service is running
 docker ps | grep clamo
 pgrep -f "clamo-tenant"
 
-# 2. Verificar puerto
+# 2. Verify port
 lsof -i :4001
 
-# 3. Verificar logs
+# 3. Check logs
 docker logs clamo-tenant --tail 50
 
-# 4. Verificar variables de entorno
+# 4. Verify environment variables
 env | grep DATABASE_URL
 ```
 
 ### Prisma Migration Failed
 
-**Síntomas**: Error al ejecutar migraciones.
+**Symptoms**: Error when running migrations.
 
 ```bash
-# 1. Ver estado actual
+# 1. View current status
 npx prisma migrate status --schema=prisma/control/schema.prisma
 
-# 2. Reset (CUIDADO: borra datos)
+# 2. Reset (WARNING: deletes data)
 npx prisma migrate reset --schema=prisma/control/schema.prisma
 
-# 3. Forzar migración
+# 3. Force migration
 npx prisma migrate resolve --applied "migration_name" --schema=prisma/control/schema.prisma
 ```
 
-## Herramientas de Monitoreo
+## Monitoring Tools
 
-### Métricas con Prometheus
+### Metrics with Prometheus
 
 ```bash
-# Ver métricas de un servicio
+# View service metrics
 curl http://localhost:4001/metrics
 
-# Queries útiles en Grafana
+# Useful queries in Grafana
 rate(http_requests_total[5m])
 histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))
 ```
 
 ### Tinybird Dashboard
 
-Accede a https://ui.tinybird.co para:
-- Ver queries en tiempo real
-- Monitorear ingesta de datos
-- Crear visualizaciones
+Access https://ui.tinybird.co to:
+- View real-time queries
+- Monitor data ingestion
+- Create visualizations
 
-## Próximos Pasos
+## Next Steps
 
 <CardGroup cols={2}>
   <Card
-    title="Entorno de Desarrollo"
+    title="Development Environment"
     icon="laptop-code"
-    href="/es/interno/entorno-desarrollo"
+    href="/en/getting-started/local-environment"
   >
-    Configuración del entorno local.
+    Local environment setup.
   </Card>
   <Card
-    title="Despliegue"
+    title="Deployment"
     icon="rocket"
-    href="/es/interno/despliegue"
+    href="/en/guides/deployment"
   >
-    Procedimientos de deployment.
+    Deployment procedures.
   </Card>
 </CardGroup>
-
