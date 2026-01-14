@@ -1,393 +1,458 @@
 ---
-title: Errors
-description: Complete guide for handling errors in Clamo integration
+title: Errors and Troubleshooting
+description: Guide to Clamo architecture-specific errors and how to resolve them
 ---
 
-# Error Handling
+# Errors and Troubleshooting
 
-This guide provides strategies for handling the different types of errors that can occur when integrating with Clamo APIs.
+This guide documents errors specific to Clamo's architecture: **Multi-tenancy**, **Unified AI**, **Trusted Sources**, and **Internal Communication**. Learn to diagnose and resolve the most common problems.
 
-## Error Categories
-
-### Client Errors (4xx)
-
-Errors caused by the client request. Generally should not be retried without fixing the problem.
-
-### Server Errors (5xx)
-
-Server-side errors. Can be retried with exponential backoff.
-
-### Network Errors
-
-Timeouts, refused connections, etc. Can be retried.
-
-## Handling Strategy
-
-```mermaid
-flowchart TD
-    A[Error Received] --> B{HTTP Code}
-    B -->|4xx| C{Error Type}
-    B -->|5xx| D[Retry with Backoff]
-    B -->|Network| D
-    
-    C -->|401| E[Refresh Token]
-    C -->|403| F[Check Permissions]
-    C -->|404| G[Verify Resource]
-    C -->|422| H[Business Error]
-    C -->|429| I[Rate Limit - Wait]
-    
-    E --> J[Retry Request]
-    I --> J
-    D --> J
-    
-    F --> K[Notify User]
-    G --> K
-    H --> K
-```
-
-## Implementation
-
-### Client with Error Handling
-
-```typescript
-class ClamoApiError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-    public details?: Record<string, unknown>,
-    public statusCode?: number
-  ) {
-    super(message);
-    this.name = 'ClamoApiError';
-  }
-}
-
-class ClamoClient {
-  private baseUrl: string;
-  private maxRetries = 3;
-  
-  async request<T>(
-    method: string,
-    path: string,
-    options: RequestOptions = {}
-  ): Promise<T> {
-    let lastError: Error;
-    
-    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
-      try {
-        const response = await this.makeRequest(method, path, options);
-        
-        if (response.ok) {
-          return response.json();
-        }
-        
-        const error = await response.json();
-        
-        // Handle based on error code
-        switch (response.status) {
-          case 401:
-            if (error.error.code === 'TOKEN_EXPIRED') {
-              await this.refreshToken();
-              continue; // Retry
-            }
-            throw new ClamoApiError(
-              error.error.code,
-              error.error.message,
-              error.error.details,
-              401
-            );
-            
-          case 429:
-            const retryAfter = error.error.details?.retryAfter || 60;
-            await this.sleep(retryAfter * 1000);
-            continue; // Retry
-            
-          case 500:
-          case 502:
-          case 503:
-          case 504:
-            const backoff = Math.pow(2, attempt) * 1000;
-            await this.sleep(backoff);
-            continue; // Retry
-            
-          default:
-            throw new ClamoApiError(
-              error.error.code,
-              error.error.message,
-              error.error.details,
-              response.status
-            );
-        }
-      } catch (error) {
-        if (error instanceof ClamoApiError) {
-          throw error;
-        }
-        
-        // Network error
-        lastError = error as Error;
-        const backoff = Math.pow(2, attempt) * 1000;
-        await this.sleep(backoff);
-      }
-    }
-    
-    throw lastError!;
-  }
-  
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-}
-```
-
-### Client Usage
-
-```typescript
-const client = new ClamoClient();
-
-try {
-  const cases = await client.request('GET', '/v1/cases');
-  console.log('Cases:', cases);
-} catch (error) {
-  if (error instanceof ClamoApiError) {
-    switch (error.code) {
-      case 'VALIDATION_ERROR':
-        console.error('Validation error:', error.details);
-        break;
-      case 'NOT_FOUND':
-        console.error('Resource not found');
-        break;
-      case 'FORBIDDEN':
-        console.error('No permissions');
-        break;
-      default:
-        console.error('API error:', error.message);
-    }
-  } else {
-    console.error('Unexpected error:', error);
-  }
-}
-```
-
-## Common Errors and Solutions
-
-### UNAUTHORIZED (401)
-
-**Cause**: Missing, invalid, or expired token.
-
-```typescript
-// Solution: Verify and refresh token
-if (error.code === 'UNAUTHORIZED' || error.code === 'TOKEN_EXPIRED') {
-  const newToken = await refreshAccessToken();
-  // Retry with new token
-}
-```
-
-### FORBIDDEN (403)
-
-**Cause**: User doesn't have permissions for the action.
-
-```typescript
-// Solution: Check user role
-if (error.code === 'FORBIDDEN') {
-  const user = await client.getMe();
-  if (user.role !== 'admin') {
-    showError('This action requires administrator permissions');
-  }
-}
-```
-
-### NOT_FOUND (404)
-
-**Cause**: Resource doesn't exist or was deleted.
-
-```typescript
-// Solution: Handle gracefully
-if (error.code === 'NOT_FOUND') {
-  // Clear local cache if exists
-  cache.delete(resourceId);
-  // Redirect or show message
-  showNotFound('The requested case does not exist');
-}
-```
-
-### VALIDATION_ERROR (400)
-
-**Cause**: Invalid data in the request.
-
-```typescript
-// Solution: Show specific errors to user
-if (error.code === 'VALIDATION_ERROR') {
-  const errors = error.details?.errors || [];
-  
-  errors.forEach(err => {
-    // Mark field with error
-    setFieldError(err.field, err.message);
-  });
-}
-```
+## Multi-Tenancy Errors
 
 ### COMPANY_NOT_READY (422)
 
-**Cause**: Tenant database is not ready.
+**Symptoms:**
+- API returns 422 when trying to access data
+- User just created their account
 
-```typescript
-// Solution: Poll until ready
-if (error.code === 'COMPANY_NOT_READY') {
-  const checkStatus = async () => {
-    const company = await client.getMyCompany();
-    if (company.databaseStatus === 'ready') {
-      // Continue
-      return true;
+**Cause:** Company was created in Supabase but Neon is still provisioning the database branch (Cold Start of ~5-10 seconds).
+
+```json
+{
+  "error": {
+    "code": "COMPANY_NOT_READY",
+    "message": "Company database is being configured",
+    "details": {
+      "databaseStatus": "provisioning"
     }
-    if (company.databaseStatus === 'failed') {
-      throw new Error('Provisioning failed');
-    }
-    // Keep waiting
-    return false;
-  };
-  
-  await pollUntil(checkStatus, { interval: 5000, timeout: 60000 });
-}
-```
-
-### RATE_LIMIT_EXCEEDED (429)
-
-**Cause**: Too many requests in a short time.
-
-```typescript
-// Solution: Implement client-side rate limiting
-class RateLimiter {
-  private requests: number[] = [];
-  private limit: number;
-  private window: number;
-  
-  constructor(limit: number, windowMs: number) {
-    this.limit = limit;
-    this.window = windowMs;
-  }
-  
-  async acquire(): Promise<void> {
-    const now = Date.now();
-    this.requests = this.requests.filter(t => now - t < this.window);
-    
-    if (this.requests.length >= this.limit) {
-      const oldestRequest = this.requests[0];
-      const waitTime = this.window - (now - oldestRequest);
-      await new Promise(r => setTimeout(r, waitTime));
-    }
-    
-    this.requests.push(Date.now());
-  }
-}
-
-const rateLimiter = new RateLimiter(100, 60000); // 100 req/min
-
-async function makeRequest() {
-  await rateLimiter.acquire();
-  return client.request('GET', '/v1/cases');
-}
-```
-
-## Error Logging
-
-```typescript
-function logError(error: ClamoApiError, context: Record<string, unknown>) {
-  const logEntry = {
-    timestamp: new Date().toISOString(),
-    errorCode: error.code,
-    errorMessage: error.message,
-    statusCode: error.statusCode,
-    details: error.details,
-    context,
-  };
-  
-  // Structured log
-  console.error(JSON.stringify(logEntry));
-  
-  // Send to monitoring service
-  if (error.statusCode && error.statusCode >= 500) {
-    sendToSentry(error, context);
   }
 }
 ```
 
-## User Notification
+**Solution:** Implement polling on the `databaseStatus` field:
 
 ```typescript
-function showErrorToUser(error: ClamoApiError) {
-  const userMessages: Record<string, string> = {
-    'UNAUTHORIZED': 'Your session has expired. Please log in again.',
-    'FORBIDDEN': 'You do not have permission to perform this action.',
-    'NOT_FOUND': 'The requested resource does not exist.',
-    'VALIDATION_ERROR': 'Please review the entered data.',
-    'RATE_LIMIT_EXCEEDED': 'Too many requests. Wait a moment and try again.',
-    'COMPANY_NOT_READY': 'Your account is being configured. Try again in a few minutes.',
-    'INTERNAL_ERROR': 'An error occurred. Our team has been notified.',
-  };
-  
-  const message = userMessages[error.code] || 'An unexpected error occurred.';
-  
-  toast.error(message);
+async function waitForCompanyReady(companyId: string): Promise<Company> {
+  const maxAttempts = 12; // 60 seconds max
+  const interval = 5000; // 5 seconds
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const company = await tenant.companies.get(companyId);
+
+    switch (company.databaseStatus) {
+      case "ready":
+        return company;
+      case "failed":
+        throw new Error("Database provisioning failed");
+      case "provisioning":
+        await sleep(interval);
+        continue;
+    }
+  }
+
+  throw new Error("Timeout waiting for database");
 }
 ```
 
-## Circuit Breaker
+**In Frontend:**
 
-To protect your application from error cascades:
+```tsx
+function OnboardingStatus({ companyId }: { companyId: string }) {
+  const { data: company, isLoading } = useQuery({
+    queryKey: ["company", companyId],
+    queryFn: () => tenant.companies.get(companyId),
+    refetchInterval: (data) => 
+      data?.databaseStatus === "provisioning" ? 5000 : false,
+  });
+
+  if (company?.databaseStatus === "provisioning") {
+    return <Spinner message="Setting up your workspace..." />;
+  }
+
+  return <Dashboard />;
+}
+```
+
+### Connection Timeout to Tenant DB
+
+**Symptoms:**
+- Sporadic timeouts on queries
+- `ECONNREFUSED` or `Connection terminated` errors
+
+**Cause:** Neon branch entered "sleep" mode due to inactivity (Neon suspends inactive branches).
+
+**Solution:** Implement retry with backoff:
 
 ```typescript
-class CircuitBreaker {
-  private failures = 0;
-  private lastFailure: number = 0;
-  private state: 'closed' | 'open' | 'half-open' = 'closed';
-  
-  constructor(
-    private threshold: number = 5,
-    private resetTimeout: number = 30000
-  ) {}
-  
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.state === 'open') {
-      if (Date.now() - this.lastFailure > this.resetTimeout) {
-        this.state = 'half-open';
-      } else {
-        throw new Error('Circuit breaker is open');
-      }
-    }
-    
+async function queryWithRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3
+): Promise<T> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const result = await fn();
-      this.onSuccess();
-      return result;
+      return await fn();
     } catch (error) {
-      this.onFailure();
+      if (isConnectionError(error) && attempt < maxRetries - 1) {
+        // Neon cold start: wait and retry
+        await sleep(Math.pow(2, attempt) * 1000);
+        continue;
+      }
       throw error;
     }
   }
-  
-  private onSuccess() {
-    this.failures = 0;
-    this.state = 'closed';
-  }
-  
-  private onFailure() {
-    this.failures++;
-    this.lastFailure = Date.now();
-    
-    if (this.failures >= this.threshold) {
-      this.state = 'open';
-    }
-  }
+  throw new Error("Max retries exceeded");
 }
 
-const circuitBreaker = new CircuitBreaker();
-
-async function safeFetch() {
-  return circuitBreaker.execute(() => 
-    client.request('GET', '/v1/cases')
+function isConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return (
+    message.includes("ECONNREFUSED") ||
+    message.includes("Connection terminated") ||
+    message.includes("timeout")
   );
 }
 ```
+
+## AI Errors (Tool Guard)
+
+### TOOL_NOT_ALLOWED
+
+**Symptoms:**
+- LLM says it "can't" do something it should be able to
+- Tool exists but doesn't execute
+
+**Cause:** You're talking to the wrong profile. Each profile (Javi, Clamy, Luna) has specific tools. Tool Guard middleware blocks non-permitted tools.
+
+```
+User: "Show me a chart of cases by month"
+Javi: "Sorry, I don't have access to visualization tools"
+       ← Javi is for cases, Clamy is for analytics
+```
+
+**Diagnosis:**
+
+```typescript
+// Check which profile is active
+const config = runConfig.configurable;
+console.log("Active profile:", config.assistant_name);
+console.log("Requested tool:", toolCall.name);
+
+// See allowed tools per profile
+const PROFILE_TOOLS = {
+  javi: ["get_case", "search_cases", "get_movements"],
+  clamy: ["show_chart", "get_analytics", "compare_periods"],
+  luna: ["*"], // Luna has access to everything
+};
+```
+
+**Solution:** Switch profile based on intent:
+
+```typescript
+function detectIntentAndProfile(message: string): string {
+  if (message.match(/chart|graph|analytics|statistics/i)) {
+    return "clamy";
+  }
+  if (message.match(/case|file|movement|lawsuit/i)) {
+    return "javi";
+  }
+  return "luna"; // Default for general questions
+}
+
+// In frontend
+const profile = detectIntentAndProfile(userMessage);
+await invokeGraph({
+  config: {
+    configurable: {
+      assistant_name: profile,
+    },
+  },
+});
+```
+
+### LLM Hallucinating Tools
+
+**Symptoms:**
+- LLM tries to call tools that don't exist
+- `Tool 'xyz' not found` errors
+
+**Cause:** LLM doesn't have the updated list of available tools.
+
+**Solution:** Ensure system prompt includes tools:
+
+```typescript
+// luna/src/prompts/javi.py
+JAVI_SYSTEM_PROMPT = """
+You are Javi, Clamo's legal case assistant.
+
+## Available Tools
+You can ONLY use these tools:
+- get_case(case_id): Get case details
+- search_cases(query): Search cases
+- get_movements(case_id): Get case movements
+
+DO NOT try to use tools not in this list.
+"""
+```
+
+## Internal Authentication Errors
+
+### MISSING_AUTH_HEADERS
+
+**Symptoms:**
+- 401 error when calling from one microservice to another
+- `x-workos-*` headers not present
+
+**Cause:** Developer tried to call a public endpoint (`/v1/...`) from another microservice, bypassing Kong.
+
+```typescript
+// ❌ INCORRECT: Call public endpoint from backend
+const response = await fetch(`${CASES_URL}/v1/cases/${caseId}`);
+// Error: No x-workos-* headers because it didn't go through Kong
+```
+
+**Solution:** Use internal endpoints for service-to-service:
+
+```typescript
+// ✅ CORRECT: Use internal endpoint
+const response = await fetch(
+  `${CASES_URL}/internal/v1/companies/${companyId}/cases/${caseId}`
+);
+// OK: Internal endpoints don't require auth (trusted network)
+```
+
+**Or use SDK:**
+
+```typescript
+// ✅ CORRECT: Use SDK
+import Cases from "@getclamo/cases";
+
+const cases = new Cases({ baseURL: env.CASES_SERVICE_URL });
+const caseData = await cases.internal.companies(companyId).cases.get(caseId);
+```
+
+### ORGANIZATION_MISMATCH
+
+**Symptoms:**
+- 403 error when accessing resources
+- User is authenticated but can't see data
+
+**Cause:** JWT token has a different `org_id` than the company they're trying to access.
+
+```json
+{
+  "error": {
+    "code": "ORGANIZATION_MISMATCH",
+    "message": "You don't have access to this organization",
+    "details": {
+      "tokenOrgId": "org_abc",
+      "requestedOrgId": "org_xyz"
+    }
+  }
+}
+```
+
+**Diagnosis:**
+
+```typescript
+// Check token org_id
+const session = c.get("session");
+console.log("Token org_id:", session.orgId);
+
+// Check requested company
+const company = await controlDb.company.findUnique({
+  where: { id: requestedCompanyId },
+});
+console.log("Company workosOrgId:", company.workosOrgId);
+```
+
+**Solution:** User must switch organization in WorkOS:
+
+```typescript
+// Frontend: Org switcher
+import { getSignInUrl } from "@workos-inc/authkit-nextjs";
+
+async function switchOrganization(orgId: string) {
+  const signInUrl = await getSignInUrl({
+    organizationId: orgId,
+  });
+  window.location.href = signInUrl;
+}
+```
+
+## Async Ingestion Errors
+
+### Inconsistent Case State
+
+**Symptoms:**
+- Case exists but has no movements
+- Partial or incomplete data
+
+**Cause:** `CaseIngestRun` is in an intermediate state, not `COMPLETED`.
+
+```typescript
+// CaseIngestRun states
+enum IngestRunStatus {
+  RUNNING = "RUNNING",                    // Scraping in progress
+  MOVEMENTS_COMPLETE = "MOVEMENTS_COMPLETE", // Movements extracted
+  ANALYSIS_COMPLETE = "ANALYSIS_COMPLETE",   // AI processed
+  COMPLETED = "COMPLETED",                // All done
+  FAILED = "FAILED",                      // Error
+}
+```
+
+**Diagnosis:**
+
+```sql
+-- Check ingest run status
+SELECT 
+  ir.id,
+  ir.status,
+  ir."startedAt",
+  ir."completedAt",
+  ir.error,
+  c.expediente
+FROM "CaseIngestRun" ir
+JOIN "Case" c ON ir."caseId" = c.id
+WHERE c.id = 'case_xyz'
+ORDER BY ir."startedAt" DESC
+LIMIT 1;
+```
+
+**Solution:** Don't treat data as final until `COMPLETED`:
+
+```typescript
+// In frontend
+function CaseDetail({ caseId }: { caseId: string }) {
+  const { data: caseData } = useQuery(["case", caseId], () => 
+    cases.get(caseId)
+  );
+  
+  const { data: ingestRun } = useQuery(["ingest-run", caseId], () =>
+    cases.ingestRuns.getLatest(caseId)
+  );
+
+  if (ingestRun?.status !== "COMPLETED") {
+    return (
+      <Alert variant="info">
+        <Spinner size="sm" />
+        <span>
+          {ingestRun?.status === "RUNNING" && "Extracting data from CEJ..."}
+          {ingestRun?.status === "MOVEMENTS_COMPLETE" && "Analyzing with AI..."}
+          {ingestRun?.status === "ANALYSIS_COMPLETE" && "Finalizing..."}
+        </span>
+      </Alert>
+    );
+  }
+
+  return <CaseDetails case={caseData} />;
+}
+```
+
+### INGEST_RUN_FAILED
+
+**Symptoms:**
+- Case didn't get updated
+- Error in ingestion pipeline
+
+**Cause:** Failure in some pipeline stage (scraping, normalization, insertion).
+
+**Diagnosis:**
+
+```typescript
+// Get error details
+const ingestRun = await cases.internal
+  .companies(companyId)
+  .ingestRuns.get(runId);
+
+console.log("Status:", ingestRun.status);
+console.log("Error:", ingestRun.error);
+console.log("Failed at:", ingestRun.failedAt);
+
+// Common errors:
+// - "CEJ_TIMEOUT": CEJ didn't respond
+// - "PARSE_ERROR": CEJ HTML changed
+// - "LLM_ERROR": Anthropic failed
+// - "DB_ERROR": Insert error
+```
+
+**Solution:** Retry ingestion:
+
+```typescript
+// Retry failed ingestion
+await cases.internal.companies(companyId).ingestRuns.create({
+  caseId: caseId,
+  expediente: expediente,
+  source: "MANUAL_RETRY",
+});
+```
+
+## Trusted Source Errors
+
+### Manual Value Overwritten
+
+**Symptoms:**
+- A user-corrected value was replaced
+- User reports their "changes were lost"
+
+**Cause:** A batch process (ingestion, sync) overwrote a `manual` value with an `ai` or `cej` value.
+
+**Diagnosis:**
+
+```sql
+-- See field change history
+SELECT 
+  id,
+  expediente,
+  risk_level->>'cej' as cej_value,
+  risk_level->>'ai' as ai_value,
+  risk_level->>'manual' as manual_value,
+  risk_level->'updatedAt'->>'manual' as manual_updated_at,
+  "updatedAt"
+FROM "Case"
+WHERE id = 'case_xyz';
+```
+
+**Prevention:** Always verify before overwriting:
+
+```typescript
+// In ingestion service
+async function updateCaseFromCEJ(caseId: string, cejData: CEJData) {
+  const existing = await caseRepo.findById(tenantDb, caseId);
+
+  const updateData: Partial<CaseData> = {};
+
+  // Only update CEJ fields if no manual value exists
+  for (const field of SOURCED_FIELDS) {
+    const currentValue = existing[field] as SourcedValue;
+
+    if (currentValue.manual === null) {
+      updateData[field] = {
+        ...currentValue,
+        cej: cejData[field],
+        updatedAt: {
+          ...currentValue.updatedAt,
+          cej: new Date().toISOString(),
+        },
+      };
+    } else {
+      console.log(`Skipping ${field} - manual value exists`);
+    }
+  }
+
+  return caseRepo.update(tenantDb, caseId, updateData);
+}
+```
+
+## Quick Reference Table
+
+| Error | Code | Common Cause | Solution |
+|-------|------|--------------|----------|
+| `COMPANY_NOT_READY` | 422 | DB provisioning | Poll until `ready` |
+| `TOOL_NOT_ALLOWED` | - | Wrong profile | Change `assistant_name` |
+| `MISSING_AUTH_HEADERS` | 401 | Direct call without Kong | Use `/internal/...` |
+| `ORGANIZATION_MISMATCH` | 403 | Token from another org | Switch organization |
+| `INGEST_RUN_FAILED` | - | Pipeline failed | Retry ingestion |
+| Connection Timeout | - | Neon cold start | Retry with backoff |
 
 ## Next Steps
 
@@ -397,13 +462,27 @@ async function safeFetch() {
     icon="lightbulb"
     href="/en/guides/best-practices"
   >
-    Recommendations for a robust integration.
+    Avoid these errors from the start.
+  </Card>
+  <Card
+    title="Security"
+    icon="shield"
+    href="/en/architecture/security"
+  >
+    Understand the chain of trust.
+  </Card>
+  <Card
+    title="Ingestion Debugging"
+    icon="bug"
+    href="/en/guides/debugging-ingestion"
+  >
+    Data pipeline troubleshooting.
   </Card>
   <Card
     title="API Reference"
     icon="code"
     href="/en/api-reference/errors"
   >
-    Technical error documentation.
+    API error codes.
   </Card>
 </CardGroup>

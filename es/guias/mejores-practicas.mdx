@@ -1,513 +1,422 @@
 ---
 title: Mejores Prácticas
-description: Recomendaciones para una integración robusta con Clamo
+description: Guía específica para desarrolladores de Clamo - evita los errores comunes
 ---
 
-# Mejores Prácticas
+# Mejores Prácticas para Desarrolladores
 
-Esta guía recopila las mejores prácticas para integrar tu aplicación con Clamo de manera eficiente y robusta.
+Esta guía documenta las prácticas específicas de Clamo basadas en su arquitectura: **RRS**, **Unified AI**, **Multi-tenant estricto** y **Trusted Sources**. Sigue estas reglas para evitar los errores más comunes.
 
-## Autenticación
-
-### Almacenamiento Seguro de Tokens
+## Backend: Zero Trust en Base de Datos
 
 <Warning>
-**Nunca almacenes tokens en localStorage o sessionStorage**. Usa cookies HttpOnly para el navegador.
+**Regla Fundamental:** Nunca asumas que estás conectado a la base de datos correcta.
 </Warning>
 
-```typescript
-// Correcto: Cookie HttpOnly (Next.js)
-import { cookies } from 'next/headers';
+### Siempre usa `getTenantClient(ctx)`
 
-export async function setSession(accessToken: string, refreshToken: string) {
-  const cookieStore = cookies();
+```typescript
+// ❌ INCORRECTO: Instanciar PrismaClient manualmente
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient({
+  datasources: {
+    db: { url: process.env.DATABASE_URL }, // ← ¿De qué tenant?
+  },
+});
+
+const cases = await prisma.case.findMany(); // ← Datos de quién?
+```
+
+```typescript
+// ✅ CORRECTO: Usar el cliente del contexto
+async function handler(c: Context) {
+  const tenantDb = c.get("tenantDb"); // ← Resuelto por middleware
   
-  cookieStore.set('access_token', accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 60 * 60, // 1 hora
-  });
-  
-  cookieStore.set('refresh_token', refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 60 * 60 * 24 * 7, // 7 días
+  const cases = await tenantDb.case.findMany();
+  // ✅ Siempre del tenant correcto
+}
+```
+
+### Nunca construyas connection strings
+
+```typescript
+// ❌ INCORRECTO: Concatenar strings
+const connectionString = `postgresql://${user}:${pass}@${host}/${dbName}`;
+const prisma = new PrismaClient({ datasources: { db: { url: connectionString } } });
+```
+
+```typescript
+// ✅ CORRECTO: Usar el SDK de Tenant
+import { getTenantClient } from "@getclamo/database";
+
+const tenantDb = await getTenantClient({
+  companyId: company.id,
+  connectionString, // ← Viene del Tenant SDK, encriptado en Vault
+});
+```
+
+**Por qué:** Evita el error catastrófico de escribir datos del Cliente A en la base de datos del Cliente B.
+
+## Data: Respeto a la Jerarquía de Fuentes (Trusted Source)
+
+<Warning>
+**Regla Fundamental:** El dato no es un string plano. Tiene origen y jerarquía.
+</Warning>
+
+### Verifica el origen antes de sobrescribir
+
+```typescript
+// ❌ INCORRECTO: Sobrescribir sin verificar
+async function updateCaseFromAI(caseId: string, aiData: AIAnalysis) {
+  await tenantDb.case.update({
+    where: { id: caseId },
+    data: {
+      riskLevel: aiData.riskLevel, // ← ¿Y si el humano ya lo corrigió?
+    },
   });
 }
 ```
 
-### Refresh Proactivo
-
-Renueva el token antes de que expire:
-
 ```typescript
-class TokenManager {
-  private accessToken: string;
-  private expiresAt: number;
-  
-  async getToken(): Promise<string> {
-    // Renovar si quedan menos de 5 minutos
-    if (this.expiresAt - Date.now() < 5 * 60 * 1000) {
-      await this.refresh();
-    }
-    return this.accessToken;
+// ✅ CORRECTO: Verificar jerarquía de fuentes
+async function updateCaseFromAI(caseId: string, aiData: AIAnalysis) {
+  const existingCase = await tenantDb.case.findUnique({
+    where: { id: caseId },
+  });
+
+  const currentRiskLevel = existingCase.riskLevel as SourcedValue;
+
+  // Si hay valor manual, NO sobrescribir con AI
+  if (currentRiskLevel.manual !== null) {
+    console.log("Skipping AI update - manual value exists");
+    return existingCase;
   }
-  
-  private async refresh() {
-    const { accessToken, expiresIn } = await refreshAccessToken();
-    this.accessToken = accessToken;
-    this.expiresAt = Date.now() + expiresIn * 1000;
-  }
-}
-```
 
-## Llamadas a la API
-
-### Centralizar Cliente
-
-Usa un cliente centralizado para todas las llamadas:
-
-```typescript
-// lib/clamo.ts
-class ClamoClient {
-  private baseUrl = process.env.CLAMO_API_URL;
-  private tokenManager: TokenManager;
-  
-  constructor() {
-    this.tokenManager = new TokenManager();
-  }
-  
-  async request<T>(
-    method: string,
-    path: string,
-    body?: unknown
-  ): Promise<T> {
-    const token = await this.tokenManager.getToken();
-    const session = await this.getSessionToken();
-    
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'x-clamo-session': session,
-        'Content-Type': 'application/json',
+  // Solo actualizar el campo AI, preservar manual
+  await tenantDb.case.update({
+    where: { id: caseId },
+    data: {
+      riskLevel: {
+        ...currentRiskLevel,
+        ai: aiData.riskLevel,
+        updatedAt: {
+          ...currentRiskLevel.updatedAt,
+          ai: new Date().toISOString(),
+        },
       },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    
-    if (!response.ok) {
-      throw await this.handleError(response);
-    }
-    
-    return response.json();
-  }
-  
-  // Métodos tipados
-  cases = {
-    list: (params?: CaseListParams) => 
-      this.request<CaseListResponse>('GET', `/v1/cases?${new URLSearchParams(params)}`),
-    get: (id: string) => 
-      this.request<Case>('GET', `/v1/cases/${id}`),
-    update: (id: string, data: UpdateCaseData) => 
-      this.request<Case>('PATCH', `/v1/cases/${id}`, data),
-  };
-}
-
-export const clamo = new ClamoClient();
-```
-
-### Evitar N+1 Queries
-
-En lugar de hacer múltiples llamadas, usa los endpoints de lista:
-
-```typescript
-// Incorrecto: N+1 queries
-const caseIds = ['case_1', 'case_2', 'case_3'];
-const cases = await Promise.all(
-  caseIds.map(id => clamo.cases.get(id))
-);
-
-// Correcto: Una sola llamada con filtro
-const { data: cases } = await clamo.cases.list({
-  ids: caseIds.join(','),
-});
-```
-
-### Paginación Eficiente
-
-Para grandes conjuntos de datos, pagina correctamente:
-
-```typescript
-async function* getAllCases(): AsyncGenerator<Case> {
-  let page = 1;
-  let hasMore = true;
-  
-  while (hasMore) {
-    const { data, pagination } = await clamo.cases.list({
-      page: page.toString(),
-      limit: '100',
-    });
-    
-    for (const caso of data) {
-      yield caso;
-    }
-    
-    hasMore = page < pagination.totalPages;
-    page++;
-  }
-}
-
-// Uso
-for await (const caso of getAllCases()) {
-  processCase(caso);
-}
-```
-
-## Caché
-
-### Caché de Datos Estáticos
-
-Cachea datos que cambian poco:
-
-```typescript
-import { unstable_cache } from 'next/cache';
-
-// Cachear taxonomía por 1 hora
-const getStages = unstable_cache(
-  async () => {
-    return clamo.request('GET', '/v1/taxonomy/stages');
-  },
-  ['taxonomy-stages'],
-  { revalidate: 3600 }
-);
-
-// Cachear empresa por 5 minutos
-const getCompany = unstable_cache(
-  async (companyId: string) => {
-    return clamo.request('GET', `/v1/companies/${companyId}`);
-  },
-  ['company'],
-  { revalidate: 300 }
-);
-```
-
-### Invalidación de Caché
-
-Invalida el caché cuando los datos cambian:
-
-```typescript
-import { revalidateTag } from 'next/cache';
-
-async function updateCase(id: string, data: UpdateCaseData) {
-  const result = await clamo.cases.update(id, data);
-  
-  // Invalidar caché relacionado
-  revalidateTag(`case-${id}`);
-  revalidateTag('cases-list');
-  
-  return result;
-}
-```
-
-## Optimistic Updates
-
-Actualiza la UI antes de confirmar con el servidor:
-
-```typescript
-function useCaseUpdate(caseId: string) {
-  const queryClient = useQueryClient();
-  
-  return useMutation({
-    mutationFn: (data: UpdateCaseData) => 
-      clamo.cases.update(caseId, data),
-    
-    onMutate: async (newData) => {
-      // Cancelar queries en vuelo
-      await queryClient.cancelQueries({ queryKey: ['case', caseId] });
-      
-      // Snapshot del estado anterior
-      const previousCase = queryClient.getQueryData(['case', caseId]);
-      
-      // Optimistic update
-      queryClient.setQueryData(['case', caseId], (old: Case) => ({
-        ...old,
-        ...newData,
-      }));
-      
-      return { previousCase };
-    },
-    
-    onError: (err, newData, context) => {
-      // Rollback en caso de error
-      queryClient.setQueryData(['case', caseId], context?.previousCase);
-    },
-    
-    onSettled: () => {
-      // Refetch para asegurar consistencia
-      queryClient.invalidateQueries({ queryKey: ['case', caseId] });
     },
   });
 }
 ```
 
-## Webhooks
-
-### Idempotencia
-
-Asegúrate de que procesar el mismo webhook múltiples veces no cause problemas:
+### Jerarquía de prioridad
 
 ```typescript
-const processedEvents = new Set<string>();
+// utils/trusted-source.ts
+type Source = "cej" | "ai" | "manual";
 
-async function handleWebhook(event: WebhookEvent) {
-  // Verificar si ya fue procesado
-  if (processedEvents.has(event.id)) {
-    console.log(`Event ${event.id} already processed, skipping`);
-    return;
-  }
-  
-  // O usar base de datos para persistencia
-  const existing = await db.processedWebhooks.findUnique({
-    where: { eventId: event.id },
-  });
-  
-  if (existing) {
-    return;
-  }
-  
-  // Procesar evento
-  await processEvent(event);
-  
-  // Marcar como procesado
-  await db.processedWebhooks.create({
-    data: { eventId: event.id, processedAt: new Date() },
-  });
-}
-```
-
-### Procesamiento Asíncrono
-
-No bloquees el webhook esperando procesamiento largo:
-
-```typescript
-app.post('/webhooks/clamo', async (req, res) => {
-  // Verificar firma...
-  
-  // Encolar para procesamiento asíncrono
-  await queue.add('webhook', {
-    event: req.body,
-    receivedAt: new Date(),
-  });
-  
-  // Responder inmediatamente
-  res.json({ received: true });
-});
-
-// Worker separado
-queue.process('webhook', async (job) => {
-  const { event } = job.data;
-  await processWebhook(event);
-});
-```
-
-## Manejo de Errores
-
-### Errores Específicos vs Genéricos
-
-Proporciona mensajes útiles al usuario:
-
-```typescript
-function getErrorMessage(error: ClamoApiError): string {
-  // Errores específicos con contexto
-  const specificMessages: Record<string, string> = {
-    'CASE_NOT_FOUND': 'El caso que buscas no existe o fue eliminado.',
-    'CASE_ARCHIVED': 'Este caso está archivado y no puede ser modificado.',
-    'PLAN_LIMIT_EXCEEDED': 'Has alcanzado el límite de tu plan. Actualiza para continuar.',
-    'DUPLICATE_EXPEDIENTE': 'Ya existe un caso con este número de expediente.',
-  };
-  
-  if (specificMessages[error.code]) {
-    return specificMessages[error.code];
-  }
-  
-  // Mensajes genéricos por categoría
-  if (error.statusCode === 401) {
-    return 'Tu sesión ha expirado. Por favor, inicia sesión nuevamente.';
-  }
-  
-  if (error.statusCode === 403) {
-    return 'No tienes permisos para realizar esta acción.';
-  }
-  
-  if (error.statusCode && error.statusCode >= 500) {
-    return 'Ocurrió un error en el servidor. Intenta de nuevo en unos minutos.';
-  }
-  
-  return 'Ocurrió un error inesperado.';
-}
-```
-
-## Seguridad
-
-### Validación de Entrada
-
-Valida datos antes de enviar a la API:
-
-```typescript
-import { z } from 'zod';
-
-const UpdateCaseSchema = z.object({
-  riskLevel: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
-  claimAmount: z.number().positive().optional(),
-  notes: z.string().max(5000).optional(),
-});
-
-async function updateCase(id: string, data: unknown) {
-  // Validar antes de enviar
-  const validated = UpdateCaseSchema.parse(data);
-  
-  return clamo.cases.update(id, validated);
-}
-```
-
-### Sanitización de Logs
-
-No loguees datos sensibles:
-
-```typescript
-function sanitizeForLogging(data: unknown): unknown {
-  if (typeof data !== 'object' || data === null) {
-    return data;
-  }
-  
-  const sensitiveKeys = ['password', 'token', 'secret', 'apiKey', 'connectionString'];
-  
-  return Object.fromEntries(
-    Object.entries(data).map(([key, value]) => [
-      key,
-      sensitiveKeys.some(k => key.toLowerCase().includes(k))
-        ? '[REDACTED]'
-        : sanitizeForLogging(value),
-    ])
-  );
-}
-```
-
-## Monitoreo
-
-### Métricas de API
-
-Trackea el rendimiento de las llamadas:
-
-```typescript
-async function trackApiCall<T>(
-  name: string,
-  fn: () => Promise<T>
-): Promise<T> {
-  const start = Date.now();
-  
-  try {
-    const result = await fn();
-    
-    metrics.histogram('api_call_duration_ms', Date.now() - start, {
-      endpoint: name,
-      status: 'success',
-    });
-    
-    return result;
-  } catch (error) {
-    metrics.histogram('api_call_duration_ms', Date.now() - start, {
-      endpoint: name,
-      status: 'error',
-      errorCode: error instanceof ClamoApiError ? error.code : 'unknown',
-    });
-    
-    throw error;
-  }
-}
-
-// Uso
-const cases = await trackApiCall('cases.list', () => 
-  clamo.cases.list({ status: 'EN_TRAMITE' })
-);
-```
-
-## Testing
-
-### Mocks para Tests
-
-Mockea el cliente de Clamo en tests:
-
-```typescript
-// __mocks__/clamo.ts
-export const clamo = {
-  cases: {
-    list: jest.fn(),
-    get: jest.fn(),
-    update: jest.fn(),
-  },
+const SOURCE_PRIORITY: Record<Source, number> = {
+  cej: 1,    // Más bajo - dato crudo del scraper
+  ai: 2,     // Medio - normalizado por LLM
+  manual: 3, // Más alto - corregido por humano
 };
 
-// test.spec.ts
-import { clamo } from '../lib/clamo';
+export function canOverwrite(
+  current: SourcedValue,
+  newSource: Source
+): boolean {
+  const currentSource = current.manual ? "manual" 
+    : current.ai ? "ai" 
+    : "cej";
 
-jest.mock('../lib/clamo');
+  // Solo puede sobrescribir si tiene igual o mayor prioridad
+  return SOURCE_PRIORITY[newSource] >= SOURCE_PRIORITY[currentSource];
+}
 
-describe('CaseList', () => {
-  it('renders cases', async () => {
-    (clamo.cases.list as jest.Mock).mockResolvedValue({
-      data: [
-        { id: 'case_1', expediente: '00001-2024-...' },
-      ],
-      pagination: { total: 1 },
-    });
-    
-    render(<CaseList />);
-    
-    await waitFor(() => {
-      expect(screen.getByText('00001-2024-...')).toBeInTheDocument();
-    });
-  });
+export function resolveValue<T>(sourced: SourcedValue<T>): T | null {
+  // Manual > AI > CEJ
+  return sourced.manual ?? sourced.ai ?? sourced.cej ?? null;
+}
+```
+
+## Código: Patrón RRS (Repository-Route-Service)
+
+<Warning>
+**Regla Fundamental:** Cada capa tiene una responsabilidad única. No las mezcles.
+</Warning>
+
+### Route: Solo validación y respuesta
+
+```typescript
+// ✅ CORRECTO
+app.patch("/:id", zValidator("json", UpdateSchema), async (c) => {
+  const id = c.req.param("id");
+  const data = c.req.valid("json");
+  const tenantDb = c.get("tenantDb");
+
+  const result = await caseService.updateCase(tenantDb, id, data);
+
+  return c.json(result);
 });
 ```
 
-## Checklist de Integración
+```typescript
+// ❌ INCORRECTO: Lógica de negocio en Route
+app.patch("/:id", async (c) => {
+  const id = c.req.param("id");
+  const tenantDb = c.get("tenantDb");
+
+  // ❌ Query de Prisma en el controlador
+  const existing = await tenantDb.case.findUnique({ where: { id } });
+
+  // ❌ Lógica de negocio en el controlador
+  if (existing.status === "ARCHIVED") {
+    return c.json({ error: "Cannot update" }, 400);
+  }
+
+  // ❌ Más queries en el controlador
+  const updated = await tenantDb.case.update({ where: { id }, data });
+
+  return c.json(updated);
+});
+```
+
+### Service: Lógica de negocio
+
+```typescript
+// ✅ CORRECTO: Toda la lógica aquí
+class CaseService {
+  async updateCase(tenantDb: PrismaClient, id: string, data: UpdateInput) {
+    const existing = await this.caseRepo.findById(tenantDb, id);
+
+    if (!existing) {
+      throw new NotFoundError("Case not found");
+    }
+
+    if (existing.status === "ARCHIVED") {
+      throw new BusinessError("Cannot update archived case");
+    }
+
+    // Lógica de Trusted Source
+    const updateData = this.prepareUpdate(existing, data);
+
+    return this.caseRepo.update(tenantDb, id, updateData);
+  }
+}
+```
+
+### Repository: Solo acceso a datos
+
+```typescript
+// ✅ CORRECTO: Solo Prisma aquí
+class CaseRepository {
+  async findById(db: PrismaClient, id: string) {
+    return db.case.findUnique({ where: { id } });
+  }
+
+  async update(db: PrismaClient, id: string, data: UpdateData) {
+    return db.case.update({ where: { id }, data });
+  }
+}
+```
+
+## AI: Contexto antes que Pregunta
+
+<Warning>
+**Regla Fundamental:** Luna es ciega sin contexto. Siempre inyecta el estado necesario.
+</Warning>
+
+### Siempre pasa el `assistant_name` correcto
+
+```typescript
+// ❌ INCORRECTO: No especificar perfil
+const response = await fetch(`${LANGGRAPH_URL}/runs`, {
+  method: "POST",
+  body: JSON.stringify({
+    input: { messages: [{ role: "user", content: "Dame el resumen del caso" }] },
+    // ← ¿Javi? ¿Clamy? ¿Luna?
+  }),
+});
+```
+
+```typescript
+// ✅ CORRECTO: Especificar perfil y contexto
+const response = await fetch(`${LANGGRAPH_URL}/runs`, {
+  method: "POST",
+  body: JSON.stringify({
+    assistant_id: "luna",
+    input: {
+      messages: [{ role: "user", content: "Dame el resumen del caso" }],
+    },
+    config: {
+      configurable: {
+        assistant_name: "javi",  // ← Perfil específico
+        case_id: caseId,         // ← Contexto del caso
+        company_id: companyId,   // ← Contexto del tenant
+      },
+    },
+  }),
+});
+```
+
+### Inyecta IDs, no esperes que el LLM adivine
+
+```typescript
+// ❌ INCORRECTO: Esperar que el LLM extraiga del historial
+const messages = [
+  { role: "user", content: "Hablemos del caso 00001-2024-..." },
+  { role: "assistant", content: "Claro, ese caso tiene..." },
+  { role: "user", content: "¿Cuál es el riesgo?" }, // ← ¿De qué caso?
+];
+```
+
+```typescript
+// ✅ CORRECTO: Inyectar en el estado
+const response = await langgraph.invoke({
+  messages: [{ role: "user", content: "¿Cuál es el riesgo?" }],
+  config: {
+    configurable: {
+      case_id: "case_abc123", // ← Explícito, no ambiguo
+    },
+  },
+});
+```
+
+## Multi-Tenancy: Aislamiento Estricto
+
+### Nunca confíes en el URL para usuarios autenticados
+
+```typescript
+// ❌ INCORRECTO: Usar companyId del URL
+app.get("/companies/:companyId/cases", async (c) => {
+  const companyId = c.req.param("companyId"); // ← ¿Y si lo manipulan?
+  const tenantDb = await getTenantClient({ companyId });
+  // ...
+});
+```
+
+```typescript
+// ✅ CORRECTO: Usar orgId del token (via middleware)
+app.get("/v1/cases", async (c) => {
+  const tenantDb = c.get("tenantDb"); // ← Resuelto desde x-workos-org-id
+  // El middleware ya validó y resolvió el tenant correcto
+});
+```
+
+### Endpoints internos: Sí usa el URL
+
+```typescript
+// ✅ CORRECTO para endpoints /internal/...
+app.get("/internal/v1/companies/:companyId/cases", async (c) => {
+  const companyId = c.req.param("companyId");
+  // OK porque solo servicios internos pueden llamar aquí
+  const tenantDb = await getTenantClient({ companyId, connectionString });
+});
+```
+
+## Comunicación entre Servicios
+
+### Siempre usa SDKs, nunca queries directas
+
+```typescript
+// ❌ INCORRECTO: Query directa a otra DB
+// Desde clamo-cases intentando leer datos de clamo-tenant
+const company = await controlDb.company.findUnique({
+  where: { id: companyId },
+});
+```
+
+```typescript
+// ✅ CORRECTO: Usar el SDK
+import Tenant from "@getclamo/tenant";
+
+const tenant = new Tenant({ baseURL: env.TENANT_SERVICE_URL });
+const company = await tenant.internal.companies.get(companyId);
+```
+
+### Usa endpoints internos para servicio-a-servicio
+
+```typescript
+// ❌ INCORRECTO: Llamar endpoint público desde backend
+const response = await fetch(`${CASES_URL}/v1/cases/${caseId}`, {
+  headers: { Authorization: `Bearer ${???}` }, // ← ¿Qué token?
+});
+```
+
+```typescript
+// ✅ CORRECTO: Usar endpoint interno
+const response = await fetch(
+  `${CASES_URL}/internal/v1/companies/${companyId}/cases/${caseId}`
+);
+// Sin auth - la red interna es confiable
+```
+
+## Checklist para Pull Requests
+
+Antes de enviar un PR, verifica:
 
 <Steps>
-  <Step title="Autenticación">
-    - Tokens almacenados de forma segura
-    - Refresh automático implementado
-    - Logout limpia todos los tokens
+  <Step title="Patrón RRS">
+    - [ ] Routes solo validan con Zod y responden JSON
+    - [ ] Services contienen toda la lógica de negocio
+    - [ ] Repositories son los únicos que importan `@getclamo/database`
   </Step>
   
-  <Step title="API">
-    - Cliente centralizado
-    - Manejo de errores robusto
-    - Rate limiting del lado del cliente
-    - Retry con backoff exponencial
+  <Step title="Multi-Tenancy">
+    - [ ] No hay `new PrismaClient()` manual
+    - [ ] Uso `c.get("tenantDb")` del contexto
+    - [ ] No confío en `companyId` del URL para usuarios autenticados
   </Step>
   
-  <Step title="Webhooks">
-    - Verificación de firma
-    - Procesamiento idempotente
-    - Procesamiento asíncrono
-    - Logging de entregas
+  <Step title="Trusted Source">
+    - [ ] Verifico el origen antes de sobrescribir campos SourcedValue
+    - [ ] No sobrescribo `manual` con `ai` o `cej` en procesos batch
+    - [ ] Uso `resolveValue()` para obtener el valor final
   </Step>
   
-  <Step title="Seguridad">
-    - Validación de entrada
-    - Sanitización de logs
-    - HTTPS en producción
-    - Tokens no expuestos en frontend
+  <Step title="AI/Luna">
+    - [ ] Paso `assistant_name` en todas las invocaciones
+    - [ ] Inyecto `case_id` y `company_id` en el config
+    - [ ] No espero que el LLM adivine contexto del historial
   </Step>
   
-  <Step title="Monitoreo">
-    - Métricas de latencia
-    - Alertas de errores
-    - Logs estructurados
-    - Tracing distribuido
+  <Step title="Comunicación">
+    - [ ] Uso SDKs para llamadas entre servicios
+    - [ ] Uso `/internal/v1/...` para servicio-a-servicio
+    - [ ] No hago queries directas a DBs de otros dominios
   </Step>
 </Steps>
 
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="Patrón RRS"
+    icon="layer-group"
+    href="/es/arquitectura/patron-rrs"
+  >
+    Documentación detallada del patrón Repository-Route-Service.
+  </Card>
+  <Card
+    title="Modelo de Datos"
+    icon="database"
+    href="/es/arquitectura/modelo-datos"
+  >
+    Patrón SourcedValue para datos multi-origen.
+  </Card>
+  <Card
+    title="Errores"
+    icon="triangle-exclamation"
+    href="/es/guias/errores"
+  >
+    Troubleshooting de errores específicos de Clamo.
+  </Card>
+  <Card
+    title="Seguridad"
+    icon="shield"
+    href="/es/arquitectura/seguridad"
+  >
+    Cadena de confianza y aislamiento de tenants.
+  </Card>
+</CardGroup>

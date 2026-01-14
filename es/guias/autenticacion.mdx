@@ -55,7 +55,7 @@ flowchart TB
 
 ```
 # Desarrollo
-http://localhost:3000/callback
+http://localhost:3001/callback
 
 # Producción
 https://tu-app.com/callback
@@ -67,7 +67,8 @@ https://tu-app.com/callback
 # .env.local
 WORKOS_API_KEY=sk_live_...
 WORKOS_CLIENT_ID=client_...
-WORKOS_REDIRECT_URI=http://localhost:3000/callback
+WORKOS_REDIRECT_URI=http://localhost:3001/callback
+WORKOS_COOKIE_PASSWORD=<32+ chars random string>
 ```
 
 ## Implementación con Next.js
@@ -159,10 +160,14 @@ export default async function DashboardPage() {
 
 ## Crear Session Token de Clamo
 
-Después de autenticar con WorkOS, necesitas crear el session token de Clamo:
+<Warning>
+**Nota:** El header `x-clamo-session` es **legacy** y solo se usa en desarrollo local sin Kong. En producción, los backends confían en los headers `x-workos-*` que Kong inyecta después de validar el JWT.
+</Warning>
+
+En desarrollo local (sin Kong), puedes crear un session token para testing:
 
 ```typescript
-// lib/clamo-session.ts
+// lib/clamo-session.ts (SOLO PARA DESARROLLO LOCAL)
 import { getSession } from '@workos-inc/authkit-nextjs';
 
 interface ClamoSession {
@@ -185,7 +190,7 @@ export async function getClamoSession(): Promise<{
   }
   
   // Obtener datos de Clamo
-  const response = await fetch(`${process.env.CLAMO_API_URL}/v1/me`, {
+  const response = await fetch(`${process.env.TENANT_SERVICE_URL}/v1/me`, {
     headers: {
       'Authorization': `Bearer ${workosSession.accessToken}`,
     },
@@ -197,7 +202,7 @@ export async function getClamoSession(): Promise<{
   
   const clamoUser = await response.json();
   
-  // Crear session token
+  // Crear session token (legacy, solo para dev local)
   const sessionData: ClamoSession = {
     userId: clamoUser.id,
     workosUserId: workosSession.user.id,
@@ -220,27 +225,32 @@ export async function getClamoSession(): Promise<{
 
 ## Cliente API de Clamo
 
+En producción, las llamadas a la API pasan por Kong que valida el JWT y añade headers `x-workos-*`. En desarrollo local, el frontend inyecta estos headers directamente:
+
 ```typescript
 // lib/clamo-client.ts
-import { getClamoSession } from './clamo-session';
+import { getSession } from '@workos-inc/authkit-nextjs';
 
 class ClamoClient {
   private baseUrl: string;
   
   constructor() {
-    this.baseUrl = process.env.CLAMO_API_URL!;
+    this.baseUrl = process.env.CASES_SERVICE_URL!;
   }
   
   private async getHeaders() {
-    const session = await getClamoSession();
+    const session = await getSession();
     
     if (!session) {
       throw new Error('No autenticado');
     }
     
+    // En producción, Kong añade estos headers después de validar el JWT
+    // En desarrollo local, los añadimos directamente
     return {
       'Authorization': `Bearer ${session.accessToken}`,
-      'x-clamo-session': session.sessionToken,
+      'x-workos-user-id': session.user.id,
+      'x-workos-org-id': session.organizationId || '',
       'Content-Type': 'application/json',
     };
   }
@@ -343,11 +353,12 @@ export async function GET() {
     );
   }
   
-  // Proxy a Clamo API
-  const response = await fetch(`${process.env.CLAMO_API_URL}/v1/cases`, {
+  // Proxy a Clamo API con headers x-workos-*
+  const response = await fetch(`${process.env.CASES_SERVICE_URL}/v1/cases`, {
     headers: {
       'Authorization': `Bearer ${session.accessToken}`,
-      'x-clamo-session': createSessionToken(session),
+      'x-workos-user-id': session.user.id,
+      'x-workos-org-id': session.organizationId || '',
     },
   });
   
@@ -371,9 +382,11 @@ async function requireAdmin() {
   }
   
   // Obtener rol de Clamo
-  const response = await fetch(`${process.env.CLAMO_API_URL}/v1/me`, {
+  const response = await fetch(`${process.env.TENANT_SERVICE_URL}/v1/me`, {
     headers: {
       'Authorization': `Bearer ${session.accessToken}`,
+      'x-workos-user-id': session.user.id,
+      'x-workos-org-id': session.organizationId || '',
     },
   });
   

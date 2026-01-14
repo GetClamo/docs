@@ -135,26 +135,30 @@ async function provisionTenantDatabase(company: Company) {
 
 ## Resolución de Tenant
 
-Cada request resuelve dinámicamente la conexión del tenant:
+Cada request resuelve dinámicamente la conexión del tenant basándose en los headers `x-workos-*`:
 
 ```typescript
 // Middleware de resolución
 async function resolveTenant(c: Context, next: Next) {
-  // 1. Extraer companyId del session token
-  const session = decodeSession(c.req.header('x-clamo-session'));
-  const { companyId } = session;
+  // 1. Extraer companyId del contexto de sesión (headers x-workos-*)
+  const session = c.get("session");
   
-  // 2. Buscar credenciales
-  const companyDb = await controlPrisma.companyDatabase.findUnique({
-    where: { companyId },
+  if (!session?.orgId) {
+    throw new Error('Organization ID required');
+  }
+  
+  // 2. Resolver companyId desde organizationId de WorkOS
+  const company = await controlPrisma.company.findFirst({
+    where: { workosOrganizationId: session.orgId },
+    include: { Database: true },
   });
   
-  if (!companyDb || companyDb.status !== 'active') {
+  if (!company || !company.Database) {
     throw new Error('Tenant database not available');
   }
   
   // 3. Obtener connection string de Vault
-  const connectionUri = await vault.getSecret(companyDb.pooledConnSecretId);
+  const connectionUri = await vault.getSecret(company.Database.pooledConnSecretId);
   
   // 4. Crear cliente Prisma
   const tenantPrisma = new PrismaClient({
@@ -165,6 +169,7 @@ async function resolveTenant(c: Context, next: Next) {
   
   // 5. Adjuntar al contexto
   c.set('tenantDb', tenantPrisma);
+  c.set('companyId', company.id);
   
   await next();
   

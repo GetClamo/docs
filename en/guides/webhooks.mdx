@@ -5,9 +5,33 @@ description: Receive real-time notifications of events in Clamo
 
 # Webhooks
 
-Webhooks allow your application to receive notifications when important events occur in Clamo.
+<Warning>
+**Status: In Development** - Webhook functionality is planned but not yet fully implemented. This documentation describes the intended design. Currently, real-time notifications are handled through **Ably** for case events.
+</Warning>
 
-## Available Events
+Webhooks will allow your application to receive notifications when important events occur in Clamo.
+
+## Current Notifications (Ably)
+
+Currently, Clamo uses **Ably** for real-time notifications of case events:
+
+```typescript
+// clamo-web-app - Subscribe to case events
+import Ably from 'ably';
+
+const ably = new Ably.Realtime(ABLY_API_KEY);
+const channel = ably.channels.get(`company:${companyId}:cases`);
+
+channel.subscribe('case.updated', (message) => {
+  console.log('Case updated:', message.data);
+});
+
+channel.subscribe('movement.created', (message) => {
+  console.log('New movement:', message.data);
+});
+```
+
+## Planned Events (Future)
 
 | Event | Description |
 |-------|-------------|
@@ -19,7 +43,11 @@ Webhooks allow your application to receive notifications when important events o
 | `milestone.achieved` | Procedural milestone achieved |
 | `risk.elevated` | Risk level increased |
 
-## Configuration
+## Configuration (Future)
+
+<Note>
+The following section describes the planned API for webhooks. This functionality is not yet available.
+</Note>
 
 ### Register Webhook
 

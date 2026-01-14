@@ -1,393 +1,458 @@
 ---
-title: Errores
-description: Guía completa para manejar errores en la integración con Clamo
+title: Errores y Troubleshooting
+description: Guía de errores específicos de la arquitectura de Clamo y cómo resolverlos
 ---
 
-# Manejo de Errores
+# Errores y Troubleshooting
 
-Esta guía proporciona estrategias para manejar los diferentes tipos de errores que pueden ocurrir al integrar con las APIs de Clamo.
+Esta guía documenta los errores específicos de la arquitectura de Clamo: **Multi-tenancy**, **Unified AI**, **Trusted Sources** y **Comunicación Interna**. Aprende a diagnosticar y resolver los problemas más comunes.
 
-## Categorías de Errores
-
-### Errores de Cliente (4xx)
-
-Errores causados por la request del cliente. Generalmente no se deben reintentar sin corregir el problema.
-
-### Errores de Servidor (5xx)
-
-Errores del lado del servidor. Se pueden reintentar con backoff exponencial.
-
-### Errores de Red
-
-Timeouts, conexiones rechazadas, etc. Se pueden reintentar.
-
-## Estrategia de Manejo
-
-```mermaid
-flowchart TD
-    A[Error Recibido] --> B{Código HTTP}
-    B -->|4xx| C{Tipo de Error}
-    B -->|5xx| D[Reintentar con Backoff]
-    B -->|Network| D
-    
-    C -->|401| E[Renovar Token]
-    C -->|403| F[Verificar Permisos]
-    C -->|404| G[Verificar Recurso]
-    C -->|422| H[Error de Negocio]
-    C -->|429| I[Rate Limit - Esperar]
-    
-    E --> J[Reintentar Request]
-    I --> J
-    D --> J
-    
-    F --> K[Notificar Usuario]
-    G --> K
-    H --> K
-```
-
-## Implementación
-
-### Cliente con Manejo de Errores
-
-```typescript
-class ClamoApiError extends Error {
-  constructor(
-    public code: string,
-    message: string,
-    public details?: Record<string, unknown>,
-    public statusCode?: number
-  ) {
-    super(message);
-    this.name = 'ClamoApiError';
-  }
-}
-
-class ClamoClient {
-  private baseUrl: string;
-  private maxRetries = 3;
-  
-  async request<T>(
-    method: string,
-    path: string,
-    options: RequestOptions = {}
-  ): Promise<T> {
-    let lastError: Error;
-    
-    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
-      try {
-        const response = await this.makeRequest(method, path, options);
-        
-        if (response.ok) {
-          return response.json();
-        }
-        
-        const error = await response.json();
-        
-        // Manejar según código de error
-        switch (response.status) {
-          case 401:
-            if (error.error.code === 'TOKEN_EXPIRED') {
-              await this.refreshToken();
-              continue; // Reintentar
-            }
-            throw new ClamoApiError(
-              error.error.code,
-              error.error.message,
-              error.error.details,
-              401
-            );
-            
-          case 429:
-            const retryAfter = error.error.details?.retryAfter || 60;
-            await this.sleep(retryAfter * 1000);
-            continue; // Reintentar
-            
-          case 500:
-          case 502:
-          case 503:
-          case 504:
-            const backoff = Math.pow(2, attempt) * 1000;
-            await this.sleep(backoff);
-            continue; // Reintentar
-            
-          default:
-            throw new ClamoApiError(
-              error.error.code,
-              error.error.message,
-              error.error.details,
-              response.status
-            );
-        }
-      } catch (error) {
-        if (error instanceof ClamoApiError) {
-          throw error;
-        }
-        
-        // Error de red
-        lastError = error as Error;
-        const backoff = Math.pow(2, attempt) * 1000;
-        await this.sleep(backoff);
-      }
-    }
-    
-    throw lastError!;
-  }
-  
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-}
-```
-
-### Uso del Cliente
-
-```typescript
-const client = new ClamoClient();
-
-try {
-  const cases = await client.request('GET', '/v1/cases');
-  console.log('Casos:', cases);
-} catch (error) {
-  if (error instanceof ClamoApiError) {
-    switch (error.code) {
-      case 'VALIDATION_ERROR':
-        console.error('Error de validación:', error.details);
-        break;
-      case 'NOT_FOUND':
-        console.error('Recurso no encontrado');
-        break;
-      case 'FORBIDDEN':
-        console.error('Sin permisos');
-        break;
-      default:
-        console.error('Error de API:', error.message);
-    }
-  } else {
-    console.error('Error inesperado:', error);
-  }
-}
-```
-
-## Errores Comunes y Soluciones
-
-### UNAUTHORIZED (401)
-
-**Causa**: Token faltante, inválido o expirado.
-
-```typescript
-// Solución: Verificar y renovar token
-if (error.code === 'UNAUTHORIZED' || error.code === 'TOKEN_EXPIRED') {
-  const newToken = await refreshAccessToken();
-  // Reintentar con nuevo token
-}
-```
-
-### FORBIDDEN (403)
-
-**Causa**: El usuario no tiene permisos para la acción.
-
-```typescript
-// Solución: Verificar rol del usuario
-if (error.code === 'FORBIDDEN') {
-  const user = await client.getMe();
-  if (user.role !== 'admin') {
-    showError('Esta acción requiere permisos de administrador');
-  }
-}
-```
-
-### NOT_FOUND (404)
-
-**Causa**: El recurso no existe o fue eliminado.
-
-```typescript
-// Solución: Manejar gracefully
-if (error.code === 'NOT_FOUND') {
-  // Limpiar cache local si existe
-  cache.delete(resourceId);
-  // Redirigir o mostrar mensaje
-  showNotFound('El caso solicitado no existe');
-}
-```
-
-### VALIDATION_ERROR (400)
-
-**Causa**: Datos inválidos en la request.
-
-```typescript
-// Solución: Mostrar errores específicos al usuario
-if (error.code === 'VALIDATION_ERROR') {
-  const errors = error.details?.errors || [];
-  
-  errors.forEach(err => {
-    // Marcar campo con error
-    setFieldError(err.field, err.message);
-  });
-}
-```
+## Errores de Multi-Tenancy
 
 ### COMPANY_NOT_READY (422)
 
-**Causa**: La base de datos del tenant no está lista.
+**Síntomas:**
+- API retorna 422 al intentar acceder a datos
+- El usuario acaba de crear su cuenta
 
-```typescript
-// Solución: Polling hasta que esté lista
-if (error.code === 'COMPANY_NOT_READY') {
-  const checkStatus = async () => {
-    const company = await client.getMyCompany();
-    if (company.databaseStatus === 'ready') {
-      // Continuar
-      return true;
+**Causa:** La empresa se creó en Supabase pero Neon aún está provisionando el branch de base de datos (Cold Start de ~5-10 segundos).
+
+```json
+{
+  "error": {
+    "code": "COMPANY_NOT_READY",
+    "message": "La base de datos de la empresa está siendo configurada",
+    "details": {
+      "databaseStatus": "provisioning"
     }
-    if (company.databaseStatus === 'failed') {
-      throw new Error('Provisioning failed');
-    }
-    // Seguir esperando
-    return false;
-  };
-  
-  await pollUntil(checkStatus, { interval: 5000, timeout: 60000 });
-}
-```
-
-### RATE_LIMIT_EXCEEDED (429)
-
-**Causa**: Demasiadas requests en poco tiempo.
-
-```typescript
-// Solución: Implementar rate limiting del lado del cliente
-class RateLimiter {
-  private requests: number[] = [];
-  private limit: number;
-  private window: number;
-  
-  constructor(limit: number, windowMs: number) {
-    this.limit = limit;
-    this.window = windowMs;
-  }
-  
-  async acquire(): Promise<void> {
-    const now = Date.now();
-    this.requests = this.requests.filter(t => now - t < this.window);
-    
-    if (this.requests.length >= this.limit) {
-      const oldestRequest = this.requests[0];
-      const waitTime = this.window - (now - oldestRequest);
-      await new Promise(r => setTimeout(r, waitTime));
-    }
-    
-    this.requests.push(Date.now());
-  }
-}
-
-const rateLimiter = new RateLimiter(100, 60000); // 100 req/min
-
-async function makeRequest() {
-  await rateLimiter.acquire();
-  return client.request('GET', '/v1/cases');
-}
-```
-
-## Logging de Errores
-
-```typescript
-function logError(error: ClamoApiError, context: Record<string, unknown>) {
-  const logEntry = {
-    timestamp: new Date().toISOString(),
-    errorCode: error.code,
-    errorMessage: error.message,
-    statusCode: error.statusCode,
-    details: error.details,
-    context,
-  };
-  
-  // Log estructurado
-  console.error(JSON.stringify(logEntry));
-  
-  // Enviar a servicio de monitoreo
-  if (error.statusCode && error.statusCode >= 500) {
-    sendToSentry(error, context);
   }
 }
 ```
 
-## Notificación al Usuario
+**Solución:** Implementar polling sobre el campo `databaseStatus`:
 
 ```typescript
-function showErrorToUser(error: ClamoApiError) {
-  const userMessages: Record<string, string> = {
-    'UNAUTHORIZED': 'Tu sesión ha expirado. Por favor, inicia sesión nuevamente.',
-    'FORBIDDEN': 'No tienes permisos para realizar esta acción.',
-    'NOT_FOUND': 'El recurso solicitado no existe.',
-    'VALIDATION_ERROR': 'Por favor, revisa los datos ingresados.',
-    'RATE_LIMIT_EXCEEDED': 'Demasiadas solicitudes. Espera un momento e intenta de nuevo.',
-    'COMPANY_NOT_READY': 'Tu cuenta está siendo configurada. Intenta en unos minutos.',
-    'INTERNAL_ERROR': 'Ocurrió un error. Nuestro equipo ha sido notificado.',
-  };
-  
-  const message = userMessages[error.code] || 'Ocurrió un error inesperado.';
-  
-  toast.error(message);
+async function waitForCompanyReady(companyId: string): Promise<Company> {
+  const maxAttempts = 12; // 60 segundos máximo
+  const interval = 5000; // 5 segundos
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const company = await tenant.companies.get(companyId);
+
+    switch (company.databaseStatus) {
+      case "ready":
+        return company;
+      case "failed":
+        throw new Error("Database provisioning failed");
+      case "provisioning":
+        await sleep(interval);
+        continue;
+    }
+  }
+
+  throw new Error("Timeout waiting for database");
 }
 ```
 
-## Circuit Breaker
+**En el Frontend:**
 
-Para proteger tu aplicación de cascadas de errores:
+```tsx
+function OnboardingStatus({ companyId }: { companyId: string }) {
+  const { data: company, isLoading } = useQuery({
+    queryKey: ["company", companyId],
+    queryFn: () => tenant.companies.get(companyId),
+    refetchInterval: (data) => 
+      data?.databaseStatus === "provisioning" ? 5000 : false,
+  });
+
+  if (company?.databaseStatus === "provisioning") {
+    return <Spinner message="Configurando tu espacio de trabajo..." />;
+  }
+
+  return <Dashboard />;
+}
+```
+
+### Connection Timeout a Tenant DB
+
+**Síntomas:**
+- Timeouts esporádicos en queries
+- Errores `ECONNREFUSED` o `Connection terminated`
+
+**Causa:** El branch de Neon entró en modo "sleep" por inactividad (Neon suspende branches inactivos).
+
+**Solución:** Implementar retry con backoff:
 
 ```typescript
-class CircuitBreaker {
-  private failures = 0;
-  private lastFailure: number = 0;
-  private state: 'closed' | 'open' | 'half-open' = 'closed';
-  
-  constructor(
-    private threshold: number = 5,
-    private resetTimeout: number = 30000
-  ) {}
-  
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.state === 'open') {
-      if (Date.now() - this.lastFailure > this.resetTimeout) {
-        this.state = 'half-open';
-      } else {
-        throw new Error('Circuit breaker is open');
-      }
-    }
-    
+async function queryWithRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3
+): Promise<T> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const result = await fn();
-      this.onSuccess();
-      return result;
+      return await fn();
     } catch (error) {
-      this.onFailure();
+      if (isConnectionError(error) && attempt < maxRetries - 1) {
+        // Neon cold start: esperar y reintentar
+        await sleep(Math.pow(2, attempt) * 1000);
+        continue;
+      }
       throw error;
     }
   }
-  
-  private onSuccess() {
-    this.failures = 0;
-    this.state = 'closed';
-  }
-  
-  private onFailure() {
-    this.failures++;
-    this.lastFailure = Date.now();
-    
-    if (this.failures >= this.threshold) {
-      this.state = 'open';
-    }
-  }
+  throw new Error("Max retries exceeded");
 }
 
-const circuitBreaker = new CircuitBreaker();
-
-async function safeFetch() {
-  return circuitBreaker.execute(() => 
-    client.request('GET', '/v1/cases')
+function isConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return (
+    message.includes("ECONNREFUSED") ||
+    message.includes("Connection terminated") ||
+    message.includes("timeout")
   );
 }
 ```
+
+## Errores de AI (Tool Guard)
+
+### TOOL_NOT_ALLOWED
+
+**Síntomas:**
+- El LLM dice que "no puede" hacer algo que debería poder
+- La herramienta existe pero no se ejecuta
+
+**Causa:** Estás hablando con el perfil incorrecto. Cada perfil (Javi, Clamy, Luna) tiene herramientas específicas. El middleware de Tool Guard bloquea herramientas no permitidas.
+
+```
+Usuario: "Muéstrame una gráfica de casos por mes"
+Javi: "Lo siento, no tengo acceso a herramientas de visualización"
+       ← Javi es para casos, Clamy es para analytics
+```
+
+**Diagnóstico:**
+
+```typescript
+// Verificar qué perfil está activo
+const config = runConfig.configurable;
+console.log("Active profile:", config.assistant_name);
+console.log("Requested tool:", toolCall.name);
+
+// Ver herramientas permitidas por perfil
+const PROFILE_TOOLS = {
+  javi: ["get_case", "search_cases", "get_movements"],
+  clamy: ["show_chart", "get_analytics", "compare_periods"],
+  luna: ["*"], // Luna tiene acceso a todo
+};
+```
+
+**Solución:** Cambiar de perfil según la intención:
+
+```typescript
+function detectIntentAndProfile(message: string): string {
+  if (message.match(/gráfica|chart|analytics|estadísticas/i)) {
+    return "clamy";
+  }
+  if (message.match(/caso|expediente|movimiento|demanda/i)) {
+    return "javi";
+  }
+  return "luna"; // Default para preguntas generales
+}
+
+// En el frontend
+const profile = detectIntentAndProfile(userMessage);
+await invokeGraph({
+  config: {
+    configurable: {
+      assistant_name: profile,
+    },
+  },
+});
+```
+
+### LLM Alucinando Herramientas
+
+**Síntomas:**
+- El LLM intenta llamar herramientas que no existen
+- Errores `Tool 'xyz' not found`
+
+**Causa:** El LLM no tiene la lista actualizada de herramientas disponibles.
+
+**Solución:** Asegurarse de que el system prompt incluya las herramientas:
+
+```typescript
+// luna/src/prompts/javi.py
+JAVI_SYSTEM_PROMPT = """
+Eres Javi, el asistente de casos legales de Clamo.
+
+## Herramientas Disponibles
+SOLO puedes usar estas herramientas:
+- get_case(case_id): Obtener detalles de un caso
+- search_cases(query): Buscar casos
+- get_movements(case_id): Obtener movimientos de un caso
+
+NO intentes usar herramientas que no están en esta lista.
+"""
+```
+
+## Errores de Autenticación Interna
+
+### MISSING_AUTH_HEADERS
+
+**Síntomas:**
+- Error 401 al llamar desde un microservicio a otro
+- Headers `x-workos-*` no presentes
+
+**Causa:** Un desarrollador intentó llamar a un endpoint público (`/v1/...`) desde otro microservicio, saltándose Kong.
+
+```typescript
+// ❌ INCORRECTO: Llamar endpoint público desde backend
+const response = await fetch(`${CASES_URL}/v1/cases/${caseId}`);
+// Error: No hay headers x-workos-* porque no pasó por Kong
+```
+
+**Solución:** Usar endpoints internos para servicio-a-servicio:
+
+```typescript
+// ✅ CORRECTO: Usar endpoint interno
+const response = await fetch(
+  `${CASES_URL}/internal/v1/companies/${companyId}/cases/${caseId}`
+);
+// OK: Endpoints internos no requieren auth (red confiable)
+```
+
+**O usar el SDK:**
+
+```typescript
+// ✅ CORRECTO: Usar SDK
+import Cases from "@getclamo/cases";
+
+const cases = new Cases({ baseURL: env.CASES_SERVICE_URL });
+const caseData = await cases.internal.companies(companyId).cases.get(caseId);
+```
+
+### ORGANIZATION_MISMATCH
+
+**Síntomas:**
+- Error 403 al acceder a recursos
+- El usuario está autenticado pero no puede ver datos
+
+**Causa:** El token JWT tiene un `org_id` diferente al de la empresa que intenta acceder.
+
+```json
+{
+  "error": {
+    "code": "ORGANIZATION_MISMATCH",
+    "message": "No tienes acceso a esta organización",
+    "details": {
+      "tokenOrgId": "org_abc",
+      "requestedOrgId": "org_xyz"
+    }
+  }
+}
+```
+
+**Diagnóstico:**
+
+```typescript
+// Verificar el org_id del token
+const session = c.get("session");
+console.log("Token org_id:", session.orgId);
+
+// Verificar la empresa solicitada
+const company = await controlDb.company.findUnique({
+  where: { id: requestedCompanyId },
+});
+console.log("Company workosOrgId:", company.workosOrgId);
+```
+
+**Solución:** El usuario debe cambiar de organización en WorkOS:
+
+```typescript
+// Frontend: Org switcher
+import { getSignInUrl } from "@workos-inc/authkit-nextjs";
+
+async function switchOrganization(orgId: string) {
+  const signInUrl = await getSignInUrl({
+    organizationId: orgId,
+  });
+  window.location.href = signInUrl;
+}
+```
+
+## Errores de Ingesta Asíncrona
+
+### Estado Inconsistente de Caso
+
+**Síntomas:**
+- El caso existe pero no tiene movimientos
+- Datos parciales o incompletos
+
+**Causa:** El `CaseIngestRun` está en un estado intermedio, no en `COMPLETED`.
+
+```typescript
+// Estados del CaseIngestRun
+enum IngestRunStatus {
+  RUNNING = "RUNNING",                    // Scraping en progreso
+  MOVEMENTS_COMPLETE = "MOVEMENTS_COMPLETE", // Movimientos extraídos
+  ANALYSIS_COMPLETE = "ANALYSIS_COMPLETE",   // IA procesó
+  COMPLETED = "COMPLETED",                // Todo listo
+  FAILED = "FAILED",                      // Error
+}
+```
+
+**Diagnóstico:**
+
+```sql
+-- Verificar estado del ingest run
+SELECT 
+  ir.id,
+  ir.status,
+  ir."startedAt",
+  ir."completedAt",
+  ir.error,
+  c.expediente
+FROM "CaseIngestRun" ir
+JOIN "Case" c ON ir."caseId" = c.id
+WHERE c.id = 'case_xyz'
+ORDER BY ir."startedAt" DESC
+LIMIT 1;
+```
+
+**Solución:** No tratar la data como final hasta `COMPLETED`:
+
+```typescript
+// En el frontend
+function CaseDetail({ caseId }: { caseId: string }) {
+  const { data: caseData } = useQuery(["case", caseId], () => 
+    cases.get(caseId)
+  );
+  
+  const { data: ingestRun } = useQuery(["ingest-run", caseId], () =>
+    cases.ingestRuns.getLatest(caseId)
+  );
+
+  if (ingestRun?.status !== "COMPLETED") {
+    return (
+      <Alert variant="info">
+        <Spinner size="sm" />
+        <span>
+          {ingestRun?.status === "RUNNING" && "Extrayendo datos del CEJ..."}
+          {ingestRun?.status === "MOVEMENTS_COMPLETE" && "Analizando con IA..."}
+          {ingestRun?.status === "ANALYSIS_COMPLETE" && "Finalizando..."}
+        </span>
+      </Alert>
+    );
+  }
+
+  return <CaseDetails case={caseData} />;
+}
+```
+
+### INGEST_RUN_FAILED
+
+**Síntomas:**
+- El caso se quedó sin actualizar
+- Error en el pipeline de ingesta
+
+**Causa:** Fallo en alguna etapa del pipeline (scraping, normalización, inserción).
+
+**Diagnóstico:**
+
+```typescript
+// Obtener detalles del error
+const ingestRun = await cases.internal
+  .companies(companyId)
+  .ingestRuns.get(runId);
+
+console.log("Status:", ingestRun.status);
+console.log("Error:", ingestRun.error);
+console.log("Failed at:", ingestRun.failedAt);
+
+// Errores comunes:
+// - "CEJ_TIMEOUT": El CEJ no respondió
+// - "PARSE_ERROR": HTML del CEJ cambió
+// - "LLM_ERROR": Anthropic falló
+// - "DB_ERROR": Error al insertar
+```
+
+**Solución:** Reintentar la ingesta:
+
+```typescript
+// Reintentar ingesta fallida
+await cases.internal.companies(companyId).ingestRuns.create({
+  caseId: caseId,
+  expediente: expediente,
+  source: "MANUAL_RETRY",
+});
+```
+
+## Errores de Trusted Source
+
+### Sobrescritura de Valor Manual
+
+**Síntomas:**
+- Un valor corregido por el usuario fue reemplazado
+- El usuario reporta que "sus cambios se perdieron"
+
+**Causa:** Un proceso batch (ingesta, sync) sobrescribió un valor `manual` con un valor `ai` o `cej`.
+
+**Diagnóstico:**
+
+```sql
+-- Ver historial de cambios en el campo
+SELECT 
+  id,
+  expediente,
+  risk_level->>'cej' as cej_value,
+  risk_level->>'ai' as ai_value,
+  risk_level->>'manual' as manual_value,
+  risk_level->'updatedAt'->>'manual' as manual_updated_at,
+  "updatedAt"
+FROM "Case"
+WHERE id = 'case_xyz';
+```
+
+**Prevención:** Siempre verificar antes de sobrescribir:
+
+```typescript
+// En el servicio de ingesta
+async function updateCaseFromCEJ(caseId: string, cejData: CEJData) {
+  const existing = await caseRepo.findById(tenantDb, caseId);
+
+  const updateData: Partial<CaseData> = {};
+
+  // Solo actualizar campos CEJ si no hay valor manual
+  for (const field of SOURCED_FIELDS) {
+    const currentValue = existing[field] as SourcedValue;
+
+    if (currentValue.manual === null) {
+      updateData[field] = {
+        ...currentValue,
+        cej: cejData[field],
+        updatedAt: {
+          ...currentValue.updatedAt,
+          cej: new Date().toISOString(),
+        },
+      };
+    } else {
+      console.log(`Skipping ${field} - manual value exists`);
+    }
+  }
+
+  return caseRepo.update(tenantDb, caseId, updateData);
+}
+```
+
+## Tabla de Referencia Rápida
+
+| Error | Código | Causa Común | Solución |
+|-------|--------|-------------|----------|
+| `COMPANY_NOT_READY` | 422 | DB provisionando | Polling hasta `ready` |
+| `TOOL_NOT_ALLOWED` | - | Perfil incorrecto | Cambiar `assistant_name` |
+| `MISSING_AUTH_HEADERS` | 401 | Llamada directa sin Kong | Usar `/internal/...` |
+| `ORGANIZATION_MISMATCH` | 403 | Token de otra org | Cambiar organización |
+| `INGEST_RUN_FAILED` | - | Pipeline falló | Reintentar ingesta |
+| Connection Timeout | - | Neon cold start | Retry con backoff |
 
 ## Próximos Pasos
 
@@ -395,16 +460,29 @@ async function safeFetch() {
   <Card
     title="Mejores Prácticas"
     icon="lightbulb"
-    href="/guias/mejores-practicas"
+    href="/es/guias/mejores-practicas"
   >
-    Recomendaciones para una integración robusta.
+    Evita estos errores desde el principio.
+  </Card>
+  <Card
+    title="Seguridad"
+    icon="shield"
+    href="/es/arquitectura/seguridad"
+  >
+    Entiende la cadena de confianza.
+  </Card>
+  <Card
+    title="Debugging Ingesta"
+    icon="bug"
+    href="/es/guias/debugging-ingesta"
+  >
+    Troubleshooting del pipeline de datos.
   </Card>
   <Card
     title="API Reference"
     icon="code"
-    href="/api-reference/errores"
+    href="/es/api-reference/errores"
   >
-    Documentación técnica de errores.
+    Códigos de error de la API.
   </Card>
 </CardGroup>
-

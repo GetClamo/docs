@@ -388,7 +388,7 @@ kafka-consumer-groups.sh \
 
 ## Verificar Envelopes en S3
 
-Los envelopes contienen los datos normalizados del caso:
+Los envelopes contienen los datos normalizados del caso en formato **JSON** (no CSV):
 
 ```bash
 # Listar envelopes recientes
@@ -396,7 +396,15 @@ aws s3 ls s3://clamo-envelopes/cases/ --recursive | tail -20
 
 # Descargar y ver un envelope
 aws s3 cp s3://clamo-envelopes/cases/2024/01/15/case_abc123.json - | jq '.'
+
+# Ver estructura del envelope
+aws s3 cp s3://clamo-envelopes/cases/2024/01/15/case_abc123.json - | jq 'keys'
+# Output: ["artifacts", "case", "metadata", "milestones", "movements"]
 ```
+
+<Note>
+**Formato**: Los envelopes son `NormalizationArtifactsEnvelope` definidos en `@getclamo/contracts`. Contienen el caso normalizado, movimientos, hitos, y artefactos de extracción (HTML, LLM outputs).
+</Note>
 
 ## Reintentar Ingesta Fallida
 

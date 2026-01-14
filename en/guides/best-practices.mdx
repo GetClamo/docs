@@ -1,512 +1,422 @@
 ---
 title: Best Practices
-description: Recommendations for a robust integration with Clamo
+description: Specific guide for Clamo developers - avoid common mistakes
 ---
 
-# Best Practices
+# Best Practices for Developers
 
-This guide compiles best practices for integrating your application with Clamo efficiently and robustly.
+This guide documents Clamo-specific practices based on its architecture: **RRS**, **Unified AI**, **Strict Multi-tenant**, and **Trusted Sources**. Follow these rules to avoid the most common mistakes.
 
-## Authentication
-
-### Secure Token Storage
+## Backend: Zero Trust in Database
 
 <Warning>
-**Never store tokens in localStorage or sessionStorage**. Use HttpOnly cookies for the browser.
+**Fundamental Rule:** Never assume you're connected to the correct database.
 </Warning>
 
-```typescript
-// Correct: HttpOnly Cookie (Next.js)
-import { cookies } from 'next/headers';
+### Always use `getTenantClient(ctx)`
 
-export async function setSession(accessToken: string, refreshToken: string) {
-  const cookieStore = cookies();
+```typescript
+// ❌ INCORRECT: Manually instantiate PrismaClient
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient({
+  datasources: {
+    db: { url: process.env.DATABASE_URL }, // ← Which tenant?
+  },
+});
+
+const cases = await prisma.case.findMany(); // ← Whose data?
+```
+
+```typescript
+// ✅ CORRECT: Use client from context
+async function handler(c: Context) {
+  const tenantDb = c.get("tenantDb"); // ← Resolved by middleware
   
-  cookieStore.set('access_token', accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 60 * 60, // 1 hour
-  });
-  
-  cookieStore.set('refresh_token', refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 60 * 60 * 24 * 7, // 7 days
+  const cases = await tenantDb.case.findMany();
+  // ✅ Always from the correct tenant
+}
+```
+
+### Never build connection strings
+
+```typescript
+// ❌ INCORRECT: Concatenate strings
+const connectionString = `postgresql://${user}:${pass}@${host}/${dbName}`;
+const prisma = new PrismaClient({ datasources: { db: { url: connectionString } } });
+```
+
+```typescript
+// ✅ CORRECT: Use Tenant SDK
+import { getTenantClient } from "@getclamo/database";
+
+const tenantDb = await getTenantClient({
+  companyId: company.id,
+  connectionString, // ← Comes from Tenant SDK, encrypted in Vault
+});
+```
+
+**Why:** Prevents the catastrophic error of writing Client A's data to Client B's database.
+
+## Data: Respect Source Hierarchy (Trusted Source)
+
+<Warning>
+**Fundamental Rule:** Data is not a plain string. It has origin and hierarchy.
+</Warning>
+
+### Verify origin before overwriting
+
+```typescript
+// ❌ INCORRECT: Overwrite without checking
+async function updateCaseFromAI(caseId: string, aiData: AIAnalysis) {
+  await tenantDb.case.update({
+    where: { id: caseId },
+    data: {
+      riskLevel: aiData.riskLevel, // ← What if human already corrected it?
+    },
   });
 }
 ```
 
-### Proactive Refresh
-
-Renew the token before it expires:
-
 ```typescript
-class TokenManager {
-  private accessToken: string;
-  private expiresAt: number;
-  
-  async getToken(): Promise<string> {
-    // Renew if less than 5 minutes remaining
-    if (this.expiresAt - Date.now() < 5 * 60 * 1000) {
-      await this.refresh();
-    }
-    return this.accessToken;
+// ✅ CORRECT: Verify source hierarchy
+async function updateCaseFromAI(caseId: string, aiData: AIAnalysis) {
+  const existingCase = await tenantDb.case.findUnique({
+    where: { id: caseId },
+  });
+
+  const currentRiskLevel = existingCase.riskLevel as SourcedValue;
+
+  // If there's a manual value, DO NOT overwrite with AI
+  if (currentRiskLevel.manual !== null) {
+    console.log("Skipping AI update - manual value exists");
+    return existingCase;
   }
-  
-  private async refresh() {
-    const { accessToken, expiresIn } = await refreshAccessToken();
-    this.accessToken = accessToken;
-    this.expiresAt = Date.now() + expiresIn * 1000;
-  }
-}
-```
 
-## API Calls
-
-### Centralize Client
-
-Use a centralized client for all calls:
-
-```typescript
-// lib/clamo.ts
-class ClamoClient {
-  private baseUrl = process.env.CLAMO_API_URL;
-  private tokenManager: TokenManager;
-  
-  constructor() {
-    this.tokenManager = new TokenManager();
-  }
-  
-  async request<T>(
-    method: string,
-    path: string,
-    body?: unknown
-  ): Promise<T> {
-    const token = await this.tokenManager.getToken();
-    const session = await this.getSessionToken();
-    
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'x-clamo-session': session,
-        'Content-Type': 'application/json',
+  // Only update AI field, preserve manual
+  await tenantDb.case.update({
+    where: { id: caseId },
+    data: {
+      riskLevel: {
+        ...currentRiskLevel,
+        ai: aiData.riskLevel,
+        updatedAt: {
+          ...currentRiskLevel.updatedAt,
+          ai: new Date().toISOString(),
+        },
       },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    
-    if (!response.ok) {
-      throw await this.handleError(response);
-    }
-    
-    return response.json();
-  }
-  
-  // Typed methods
-  cases = {
-    list: (params?: CaseListParams) => 
-      this.request<CaseListResponse>('GET', `/v1/cases?${new URLSearchParams(params)}`),
-    get: (id: string) => 
-      this.request<Case>('GET', `/v1/cases/${id}`),
-    update: (id: string, data: UpdateCaseData) => 
-      this.request<Case>('PATCH', `/v1/cases/${id}`, data),
-  };
-}
-
-export const clamo = new ClamoClient();
-```
-
-### Avoid N+1 Queries
-
-Instead of making multiple calls, use list endpoints:
-
-```typescript
-// Incorrect: N+1 queries
-const caseIds = ['case_1', 'case_2', 'case_3'];
-const cases = await Promise.all(
-  caseIds.map(id => clamo.cases.get(id))
-);
-
-// Correct: Single call with filter
-const { data: cases } = await clamo.cases.list({
-  ids: caseIds.join(','),
-});
-```
-
-### Efficient Pagination
-
-For large datasets, paginate correctly:
-
-```typescript
-async function* getAllCases(): AsyncGenerator<Case> {
-  let page = 1;
-  let hasMore = true;
-  
-  while (hasMore) {
-    const { data, pagination } = await clamo.cases.list({
-      page: page.toString(),
-      limit: '100',
-    });
-    
-    for (const caso of data) {
-      yield caso;
-    }
-    
-    hasMore = page < pagination.totalPages;
-    page++;
-  }
-}
-
-// Usage
-for await (const caso of getAllCases()) {
-  processCase(caso);
-}
-```
-
-## Caching
-
-### Cache Static Data
-
-Cache data that changes infrequently:
-
-```typescript
-import { unstable_cache } from 'next/cache';
-
-// Cache taxonomy for 1 hour
-const getStages = unstable_cache(
-  async () => {
-    return clamo.request('GET', '/v1/taxonomy/stages');
-  },
-  ['taxonomy-stages'],
-  { revalidate: 3600 }
-);
-
-// Cache company for 5 minutes
-const getCompany = unstable_cache(
-  async (companyId: string) => {
-    return clamo.request('GET', `/v1/companies/${companyId}`);
-  },
-  ['company'],
-  { revalidate: 300 }
-);
-```
-
-### Cache Invalidation
-
-Invalidate cache when data changes:
-
-```typescript
-import { revalidateTag } from 'next/cache';
-
-async function updateCase(id: string, data: UpdateCaseData) {
-  const result = await clamo.cases.update(id, data);
-  
-  // Invalidate related cache
-  revalidateTag(`case-${id}`);
-  revalidateTag('cases-list');
-  
-  return result;
-}
-```
-
-## Optimistic Updates
-
-Update the UI before confirming with the server:
-
-```typescript
-function useCaseUpdate(caseId: string) {
-  const queryClient = useQueryClient();
-  
-  return useMutation({
-    mutationFn: (data: UpdateCaseData) => 
-      clamo.cases.update(caseId, data),
-    
-    onMutate: async (newData) => {
-      // Cancel in-flight queries
-      await queryClient.cancelQueries({ queryKey: ['case', caseId] });
-      
-      // Snapshot previous state
-      const previousCase = queryClient.getQueryData(['case', caseId]);
-      
-      // Optimistic update
-      queryClient.setQueryData(['case', caseId], (old: Case) => ({
-        ...old,
-        ...newData,
-      }));
-      
-      return { previousCase };
-    },
-    
-    onError: (err, newData, context) => {
-      // Rollback on error
-      queryClient.setQueryData(['case', caseId], context?.previousCase);
-    },
-    
-    onSettled: () => {
-      // Refetch to ensure consistency
-      queryClient.invalidateQueries({ queryKey: ['case', caseId] });
     },
   });
 }
 ```
 
-## Webhooks
-
-### Idempotency
-
-Ensure processing the same webhook multiple times doesn't cause issues:
+### Priority hierarchy
 
 ```typescript
-const processedEvents = new Set<string>();
+// utils/trusted-source.ts
+type Source = "cej" | "ai" | "manual";
 
-async function handleWebhook(event: WebhookEvent) {
-  // Check if already processed
-  if (processedEvents.has(event.id)) {
-    console.log(`Event ${event.id} already processed, skipping`);
-    return;
-  }
-  
-  // Or use database for persistence
-  const existing = await db.processedWebhooks.findUnique({
-    where: { eventId: event.id },
-  });
-  
-  if (existing) {
-    return;
-  }
-  
-  // Process event
-  await processEvent(event);
-  
-  // Mark as processed
-  await db.processedWebhooks.create({
-    data: { eventId: event.id, processedAt: new Date() },
-  });
-}
-```
-
-### Asynchronous Processing
-
-Don't block the webhook waiting for long processing:
-
-```typescript
-app.post('/webhooks/clamo', async (req, res) => {
-  // Verify signature...
-  
-  // Queue for async processing
-  await queue.add('webhook', {
-    event: req.body,
-    receivedAt: new Date(),
-  });
-  
-  // Respond immediately
-  res.json({ received: true });
-});
-
-// Separate worker
-queue.process('webhook', async (job) => {
-  const { event } = job.data;
-  await processWebhook(event);
-});
-```
-
-## Error Handling
-
-### Specific vs Generic Errors
-
-Provide useful messages to the user:
-
-```typescript
-function getErrorMessage(error: ClamoApiError): string {
-  // Specific errors with context
-  const specificMessages: Record<string, string> = {
-    'CASE_NOT_FOUND': 'The case you are looking for does not exist or was deleted.',
-    'CASE_ARCHIVED': 'This case is archived and cannot be modified.',
-    'PLAN_LIMIT_EXCEEDED': 'You have reached your plan limit. Upgrade to continue.',
-    'DUPLICATE_EXPEDIENTE': 'A case with this file number already exists.',
-  };
-  
-  if (specificMessages[error.code]) {
-    return specificMessages[error.code];
-  }
-  
-  // Generic messages by category
-  if (error.statusCode === 401) {
-    return 'Your session has expired. Please log in again.';
-  }
-  
-  if (error.statusCode === 403) {
-    return 'You do not have permission to perform this action.';
-  }
-  
-  if (error.statusCode && error.statusCode >= 500) {
-    return 'A server error occurred. Please try again in a few minutes.';
-  }
-  
-  return 'An unexpected error occurred.';
-}
-```
-
-## Security
-
-### Input Validation
-
-Validate data before sending to the API:
-
-```typescript
-import { z } from 'zod';
-
-const UpdateCaseSchema = z.object({
-  riskLevel: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).optional(),
-  claimAmount: z.number().positive().optional(),
-  notes: z.string().max(5000).optional(),
-});
-
-async function updateCase(id: string, data: unknown) {
-  // Validate before sending
-  const validated = UpdateCaseSchema.parse(data);
-  
-  return clamo.cases.update(id, validated);
-}
-```
-
-### Log Sanitization
-
-Don't log sensitive data:
-
-```typescript
-function sanitizeForLogging(data: unknown): unknown {
-  if (typeof data !== 'object' || data === null) {
-    return data;
-  }
-  
-  const sensitiveKeys = ['password', 'token', 'secret', 'apiKey', 'connectionString'];
-  
-  return Object.fromEntries(
-    Object.entries(data).map(([key, value]) => [
-      key,
-      sensitiveKeys.some(k => key.toLowerCase().includes(k))
-        ? '[REDACTED]'
-        : sanitizeForLogging(value),
-    ])
-  );
-}
-```
-
-## Monitoring
-
-### API Metrics
-
-Track call performance:
-
-```typescript
-async function trackApiCall<T>(
-  name: string,
-  fn: () => Promise<T>
-): Promise<T> {
-  const start = Date.now();
-  
-  try {
-    const result = await fn();
-    
-    metrics.histogram('api_call_duration_ms', Date.now() - start, {
-      endpoint: name,
-      status: 'success',
-    });
-    
-    return result;
-  } catch (error) {
-    metrics.histogram('api_call_duration_ms', Date.now() - start, {
-      endpoint: name,
-      status: 'error',
-      errorCode: error instanceof ClamoApiError ? error.code : 'unknown',
-    });
-    
-    throw error;
-  }
-}
-
-// Usage
-const cases = await trackApiCall('cases.list', () => 
-  clamo.cases.list({ status: 'EN_TRAMITE' })
-);
-```
-
-## Testing
-
-### Mocks for Tests
-
-Mock the Clamo client in tests:
-
-```typescript
-// __mocks__/clamo.ts
-export const clamo = {
-  cases: {
-    list: jest.fn(),
-    get: jest.fn(),
-    update: jest.fn(),
-  },
+const SOURCE_PRIORITY: Record<Source, number> = {
+  cej: 1,    // Lowest - raw scraper data
+  ai: 2,     // Medium - normalized by LLM
+  manual: 3, // Highest - corrected by human
 };
 
-// test.spec.ts
-import { clamo } from '../lib/clamo';
+export function canOverwrite(
+  current: SourcedValue,
+  newSource: Source
+): boolean {
+  const currentSource = current.manual ? "manual" 
+    : current.ai ? "ai" 
+    : "cej";
 
-jest.mock('../lib/clamo');
+  // Can only overwrite if equal or higher priority
+  return SOURCE_PRIORITY[newSource] >= SOURCE_PRIORITY[currentSource];
+}
 
-describe('CaseList', () => {
-  it('renders cases', async () => {
-    (clamo.cases.list as jest.Mock).mockResolvedValue({
-      data: [
-        { id: 'case_1', expediente: '00001-2024-...' },
-      ],
-      pagination: { total: 1 },
-    });
-    
-    render(<CaseList />);
-    
-    await waitFor(() => {
-      expect(screen.getByText('00001-2024-...')).toBeInTheDocument();
-    });
-  });
+export function resolveValue<T>(sourced: SourcedValue<T>): T | null {
+  // Manual > AI > CEJ
+  return sourced.manual ?? sourced.ai ?? sourced.cej ?? null;
+}
+```
+
+## Code: RRS Pattern (Repository-Route-Service)
+
+<Warning>
+**Fundamental Rule:** Each layer has a single responsibility. Don't mix them.
+</Warning>
+
+### Route: Only validation and response
+
+```typescript
+// ✅ CORRECT
+app.patch("/:id", zValidator("json", UpdateSchema), async (c) => {
+  const id = c.req.param("id");
+  const data = c.req.valid("json");
+  const tenantDb = c.get("tenantDb");
+
+  const result = await caseService.updateCase(tenantDb, id, data);
+
+  return c.json(result);
 });
 ```
 
-## Integration Checklist
+```typescript
+// ❌ INCORRECT: Business logic in Route
+app.patch("/:id", async (c) => {
+  const id = c.req.param("id");
+  const tenantDb = c.get("tenantDb");
+
+  // ❌ Prisma query in controller
+  const existing = await tenantDb.case.findUnique({ where: { id } });
+
+  // ❌ Business logic in controller
+  if (existing.status === "ARCHIVED") {
+    return c.json({ error: "Cannot update" }, 400);
+  }
+
+  // ❌ More queries in controller
+  const updated = await tenantDb.case.update({ where: { id }, data });
+
+  return c.json(updated);
+});
+```
+
+### Service: Business logic
+
+```typescript
+// ✅ CORRECT: All logic here
+class CaseService {
+  async updateCase(tenantDb: PrismaClient, id: string, data: UpdateInput) {
+    const existing = await this.caseRepo.findById(tenantDb, id);
+
+    if (!existing) {
+      throw new NotFoundError("Case not found");
+    }
+
+    if (existing.status === "ARCHIVED") {
+      throw new BusinessError("Cannot update archived case");
+    }
+
+    // Trusted Source logic
+    const updateData = this.prepareUpdate(existing, data);
+
+    return this.caseRepo.update(tenantDb, id, updateData);
+  }
+}
+```
+
+### Repository: Only data access
+
+```typescript
+// ✅ CORRECT: Only Prisma here
+class CaseRepository {
+  async findById(db: PrismaClient, id: string) {
+    return db.case.findUnique({ where: { id } });
+  }
+
+  async update(db: PrismaClient, id: string, data: UpdateData) {
+    return db.case.update({ where: { id }, data });
+  }
+}
+```
+
+## AI: Context Before Question
+
+<Warning>
+**Fundamental Rule:** Luna is blind without context. Always inject the necessary state.
+</Warning>
+
+### Always pass the correct `assistant_name`
+
+```typescript
+// ❌ INCORRECT: Not specifying profile
+const response = await fetch(`${LANGGRAPH_URL}/runs`, {
+  method: "POST",
+  body: JSON.stringify({
+    input: { messages: [{ role: "user", content: "Give me the case summary" }] },
+    // ← Javi? Clamy? Luna?
+  }),
+});
+```
+
+```typescript
+// ✅ CORRECT: Specify profile and context
+const response = await fetch(`${LANGGRAPH_URL}/runs`, {
+  method: "POST",
+  body: JSON.stringify({
+    assistant_id: "luna",
+    input: {
+      messages: [{ role: "user", content: "Give me the case summary" }],
+    },
+    config: {
+      configurable: {
+        assistant_name: "javi",  // ← Specific profile
+        case_id: caseId,         // ← Case context
+        company_id: companyId,   // ← Tenant context
+      },
+    },
+  }),
+});
+```
+
+### Inject IDs, don't expect the LLM to guess
+
+```typescript
+// ❌ INCORRECT: Expecting LLM to extract from history
+const messages = [
+  { role: "user", content: "Let's talk about case 00001-2024-..." },
+  { role: "assistant", content: "Sure, that case has..." },
+  { role: "user", content: "What's the risk?" }, // ← Which case?
+];
+```
+
+```typescript
+// ✅ CORRECT: Inject in state
+const response = await langgraph.invoke({
+  messages: [{ role: "user", content: "What's the risk?" }],
+  config: {
+    configurable: {
+      case_id: "case_abc123", // ← Explicit, not ambiguous
+    },
+  },
+});
+```
+
+## Multi-Tenancy: Strict Isolation
+
+### Never trust URL for authenticated users
+
+```typescript
+// ❌ INCORRECT: Use companyId from URL
+app.get("/companies/:companyId/cases", async (c) => {
+  const companyId = c.req.param("companyId"); // ← What if they manipulate it?
+  const tenantDb = await getTenantClient({ companyId });
+  // ...
+});
+```
+
+```typescript
+// ✅ CORRECT: Use orgId from token (via middleware)
+app.get("/v1/cases", async (c) => {
+  const tenantDb = c.get("tenantDb"); // ← Resolved from x-workos-org-id
+  // Middleware already validated and resolved the correct tenant
+});
+```
+
+### Internal endpoints: Yes, use URL
+
+```typescript
+// ✅ CORRECT for /internal/... endpoints
+app.get("/internal/v1/companies/:companyId/cases", async (c) => {
+  const companyId = c.req.param("companyId");
+  // OK because only internal services can call here
+  const tenantDb = await getTenantClient({ companyId, connectionString });
+});
+```
+
+## Service-to-Service Communication
+
+### Always use SDKs, never direct queries
+
+```typescript
+// ❌ INCORRECT: Direct query to another DB
+// From clamo-cases trying to read clamo-tenant data
+const company = await controlDb.company.findUnique({
+  where: { id: companyId },
+});
+```
+
+```typescript
+// ✅ CORRECT: Use SDK
+import Tenant from "@getclamo/tenant";
+
+const tenant = new Tenant({ baseURL: env.TENANT_SERVICE_URL });
+const company = await tenant.internal.companies.get(companyId);
+```
+
+### Use internal endpoints for service-to-service
+
+```typescript
+// ❌ INCORRECT: Call public endpoint from backend
+const response = await fetch(`${CASES_URL}/v1/cases/${caseId}`, {
+  headers: { Authorization: `Bearer ${???}` }, // ← What token?
+});
+```
+
+```typescript
+// ✅ CORRECT: Use internal endpoint
+const response = await fetch(
+  `${CASES_URL}/internal/v1/companies/${companyId}/cases/${caseId}`
+);
+// No auth - internal network is trusted
+```
+
+## Pull Request Checklist
+
+Before submitting a PR, verify:
 
 <Steps>
-  <Step title="Authentication">
-    - Tokens stored securely
-    - Automatic refresh implemented
-    - Logout clears all tokens
+  <Step title="RRS Pattern">
+    - [ ] Routes only validate with Zod and respond JSON
+    - [ ] Services contain all business logic
+    - [ ] Repositories are the only ones importing `@getclamo/database`
   </Step>
   
-  <Step title="API">
-    - Centralized client
-    - Robust error handling
-    - Client-side rate limiting
-    - Retry with exponential backoff
+  <Step title="Multi-Tenancy">
+    - [ ] No manual `new PrismaClient()`
+    - [ ] Using `c.get("tenantDb")` from context
+    - [ ] Not trusting `companyId` from URL for authenticated users
   </Step>
   
-  <Step title="Webhooks">
-    - Signature verification
-    - Idempotent processing
-    - Asynchronous processing
-    - Delivery logging
+  <Step title="Trusted Source">
+    - [ ] Verifying origin before overwriting SourcedValue fields
+    - [ ] Not overwriting `manual` with `ai` or `cej` in batch processes
+    - [ ] Using `resolveValue()` to get final value
   </Step>
   
-  <Step title="Security">
-    - Input validation
-    - Log sanitization
-    - HTTPS in production
-    - Tokens not exposed in frontend
+  <Step title="AI/Luna">
+    - [ ] Passing `assistant_name` in all invocations
+    - [ ] Injecting `case_id` and `company_id` in config
+    - [ ] Not expecting LLM to guess context from history
   </Step>
   
-  <Step title="Monitoring">
-    - Latency metrics
-    - Error alerts
-    - Structured logs
-    - Distributed tracing
+  <Step title="Communication">
+    - [ ] Using SDKs for service-to-service calls
+    - [ ] Using `/internal/v1/...` for service-to-service
+    - [ ] Not making direct queries to other domain DBs
   </Step>
 </Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="RRS Pattern"
+    icon="layer-group"
+    href="/en/architecture/rrs-pattern"
+  >
+    Detailed documentation of Repository-Route-Service pattern.
+  </Card>
+  <Card
+    title="Data Model"
+    icon="database"
+    href="/en/architecture/data-model"
+  >
+    SourcedValue pattern for multi-origin data.
+  </Card>
+  <Card
+    title="Errors"
+    icon="triangle-exclamation"
+    href="/en/guides/errors"
+  >
+    Troubleshooting Clamo-specific errors.
+  </Card>
+  <Card
+    title="Security"
+    icon="shield"
+    href="/en/architecture/security"
+  >
+    Chain of trust and tenant isolation.
+  </Card>
+</CardGroup>

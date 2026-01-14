@@ -16,9 +16,12 @@ Esta guía proporciona técnicas y herramientas para depurar los diferentes serv
 | clamo-web-app | Terminal / Browser Console | JSON |
 | clamo-tenant | Terminal stdout | JSON |
 | clamo-cases | Terminal stdout | JSON |
-| clamo-cej-connector | Docker logs / Temporal UI | JSON |
+| clamo-cej-connector | Docker logs | JSON |
 | clamo-ingest-go | Docker logs | Structured |
-| Temporal | http://localhost:8233 | Web UI |
+
+<Note>
+**Temporal UI:** Si ejecutas clamo-cej-connector con Docker Compose, Temporal UI está disponible en http://localhost:8233. Esto es parte del stack de Docker, no un servicio separado.
+</Note>
 
 ### Ver Logs en Tiempo Real
 
@@ -91,40 +94,45 @@ clamo-commons/postman/Clamo-API.postman_collection.json
 # Health check
 curl http://localhost:4001/health | jq
 
-# Obtener usuario actual
+# Obtener usuario actual (requiere headers x-workos-*)
 curl http://localhost:4001/v1/me \
   -H "Authorization: Bearer $TOKEN" \
-  -H "x-clamo-session: $SESSION" | jq
+  -H "x-workos-user-id: $USER_ID" \
+  -H "x-workos-org-id: $ORG_ID" | jq
 
 # Listar casos
 curl "http://localhost:4000/v1/cases?limit=5" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "x-clamo-session: $SESSION" | jq
+  -H "x-workos-user-id: $USER_ID" \
+  -H "x-workos-org-id: $ORG_ID" | jq
 ```
 
-### Generar Session Token para Testing
+### Generar Headers para Testing
 
-```typescript
-// scripts/generate-session.ts
-import { encode } from 'base64url';
+En desarrollo local sin Kong, necesitas proporcionar los headers `x-workos-*` manualmente:
 
-const session = {
-  userId: 'usr_test123',
-  workosUserId: 'user_workos123',
-  organizationId: 'org_test456',
-  companyId: 'cmp_test789',
-  email: 'test@example.com',
-  role: 'admin',
-};
+```bash
+# Exportar variables
+export TOKEN="tu_access_token_de_workos"
+export USER_ID="user_01HQMK..."
+export ORG_ID="org_01HQML..."
 
-console.log(encode(JSON.stringify(session)));
+# Usar en requests
+curl http://localhost:4000/v1/cases \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "x-workos-user-id: $USER_ID" \
+  -H "x-workos-org-id: $ORG_ID"
 ```
 
 ## Depuración de Temporal Workflows
 
+<Note>
+**Nota:** Temporal solo está disponible cuando ejecutas clamo-cej-connector con Docker Compose. No es un servicio que se ejecute de forma independiente en desarrollo local.
+</Note>
+
 ### Temporal Web UI
 
-Accede a http://localhost:8233 para:
+Si tienes el stack de Docker corriendo, accede a http://localhost:8233 para:
 - Ver workflows en ejecución
 - Inspeccionar historial de eventos
 - Reiniciar workflows fallidos
@@ -191,11 +199,11 @@ LANGCHAIN_PROJECT=clamo-dev
 ### LangGraph Studio
 
 ```bash
-cd ask-clamo
-langgraph dev --port 8123
+cd luna
+uv run langgraph dev --port 8000
 ```
 
-Accede a http://localhost:8123 para:
+Accede a http://localhost:8000 para:
 - Visualizar el grafo
 - Ejecutar pruebas interactivas
 - Inspeccionar estado
