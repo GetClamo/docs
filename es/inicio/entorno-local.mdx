@@ -98,16 +98,20 @@ La configuración se guarda en `clamo.dev.config.json`.
 
 | Servicio | Descripción | Tipo |
 |----------|-------------|------|
-| `clamo-web` | Frontend Next.js | Local |
-| `clamo-cases` | API de casos | Local |
-| `clamo-tenant` | API de tenants | Local |
+| `clamo-web` | Frontend Next.js (puerto 3001) | Local |
+| `clamo-cases` | API de casos (puerto 4000) | Local |
+| `clamo-tenant` | API de tenants (puerto 4001) | Local |
 | `clamo-dashboards` | API de dashboards (Rust) | Local |
 | `clamo-widget-server` | Servidor de widgets | Local |
-| `javi` | Agente IA de casos | Local |
-| `clamy` | Agente IA de analytics | Local |
+| `luna` | Asistente IA unificado (Javi, Clamy, Luna) | Local |
+| `clamo-tools` | Servidor de herramientas Olive | Local |
 | `clamo-cej-connector` | Conector CEJ | Docker |
 | `clamo-cej-discovery` | Workers de descubrimiento | Docker |
 | `clamo-ingest-go` | Worker de ingesta | Docker |
+
+<Note>
+**Nota sobre Asistentes IA:** `javi` y `clamy` ya no son servicios separados. Ahora son **perfiles** (tool profiles) dentro del servicio unificado `luna` (desplegado como `ask-clamo`).
+</Note>
 
 ## Comandos Principales
 
@@ -215,8 +219,8 @@ Todos los servicios tienen recarga en caliente habilitada:
 | clamo-web (Next.js) | Automático |
 | clamo-cases | Via `pnpm dev` |
 | clamo-tenant | Via `pnpm dev` |
-| clamo-analytics (FastAPI) | Via `uvicorn --reload` |
-| javi / clamy (LangGraph) | Via `langgraph dev` |
+| luna (LangGraph) | Via `langgraph dev` |
+| clamo-tools (Olive) | Via `uvicorn --reload` |
 | clamo-cej-connector (Docker) | Vía montaje de volúmenes |
 
 <Warning>
@@ -249,11 +253,11 @@ Crea un archivo `.env` en el directorio raíz:
 ```bash
 # Base de datos
 CONTROL_DATABASE_URL=postgresql://...
-TENANT_DATABASE_URL=postgresql://...
 
 # WorkOS
 WORKOS_API_KEY=sk_...
 WORKOS_CLIENT_ID=client_...
+WORKOS_REDIRECT_URI=http://localhost:3001/callback
 
 # Neon
 NEON_API_KEY=...
@@ -288,6 +292,16 @@ CEJ_REMOTE_URL=https://staging-cej.getclamo.com/api
   
   <Accordion title="Error de conexión a base de datos">
     Verifica que las URLs en `.env` sean correctas y que tengas acceso de red a Neon/Supabase.
+  </Accordion>
+  
+  <Accordion title="Puerto ya en uso">
+    Verifica qué proceso está usando el puerto:
+    ```bash
+    lsof -i :3001  # Para web app
+    lsof -i :4000  # Para clamo-cases
+    lsof -i :4001  # Para clamo-tenant
+    ```
+    Mata el proceso o cambia el puerto en tu configuración.
   </Accordion>
 </AccordionGroup>
 

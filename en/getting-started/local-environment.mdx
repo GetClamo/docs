@@ -98,16 +98,20 @@ The configuration is saved in `clamo.dev.config.json`.
 
 | Service | Description | Type |
 |---------|-------------|------|
-| `clamo-web` | Next.js Frontend | Local |
-| `clamo-cases` | Cases API | Local |
-| `clamo-tenant` | Tenants API | Local |
+| `clamo-web` | Next.js Frontend (port 3001) | Local |
+| `clamo-cases` | Cases API (port 4000) | Local |
+| `clamo-tenant` | Tenants API (port 4001) | Local |
 | `clamo-dashboards` | Dashboards API (Rust) | Local |
 | `clamo-widget-server` | Widget Server | Local |
-| `javi` | Cases AI Agent | Local |
-| `clamy` | Analytics AI Agent | Local |
+| `luna` | Unified AI Assistant (Javi, Clamy, Luna) | Local |
+| `clamo-tools` | Olive Tool Server | Local |
 | `clamo-cej-connector` | CEJ Connector | Docker |
 | `clamo-cej-discovery` | Discovery Workers | Docker |
 | `clamo-ingest-go` | Ingestion Worker | Docker |
+
+<Note>
+**Note on AI Assistants:** `javi` and `clamy` are no longer separate services. They are now **profiles** (tool profiles) within the unified `luna` service (deployed as `ask-clamo`).
+</Note>
 
 ## Main Commands
 
@@ -215,8 +219,8 @@ All services have hot reload enabled:
 | clamo-web (Next.js) | Automatic |
 | clamo-cases | Via `pnpm dev` |
 | clamo-tenant | Via `pnpm dev` |
-| clamo-analytics (FastAPI) | Via `uvicorn --reload` |
-| javi / clamy (LangGraph) | Via `langgraph dev` |
+| luna (LangGraph) | Via `langgraph dev` |
+| clamo-tools (Olive) | Via `uvicorn --reload` |
 | clamo-cej-connector (Docker) | Via volume mounting |
 
 <Warning>
@@ -249,11 +253,11 @@ Create a `.env` file in the root directory:
 ```bash
 # Database
 CONTROL_DATABASE_URL=postgresql://...
-TENANT_DATABASE_URL=postgresql://...
 
 # WorkOS
 WORKOS_API_KEY=sk_...
 WORKOS_CLIENT_ID=client_...
+WORKOS_REDIRECT_URI=http://localhost:3001/callback
 
 # Neon
 NEON_API_KEY=...
@@ -288,6 +292,16 @@ CEJ_REMOTE_URL=https://staging-cej.getclamo.com/api
   
   <Accordion title="Database connection error">
     Verify the URLs in `.env` are correct and that you have network access to Neon/Supabase.
+  </Accordion>
+  
+  <Accordion title="Port already in use">
+    Check which process is using the port:
+    ```bash
+    lsof -i :3001  # For web app
+    lsof -i :4000  # For clamo-cases
+    lsof -i :4001  # For clamo-tenant
+    ```
+    Kill the process or change the port in your configuration.
   </Accordion>
 </AccordionGroup>
 
@@ -329,4 +343,3 @@ Recommended extensions:
     Detailed documentation of each service.
   </Card>
 </CardGroup>
-

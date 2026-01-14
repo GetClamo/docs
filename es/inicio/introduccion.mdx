@@ -63,12 +63,17 @@ Clamo automatiza y centraliza todo el ciclo de vida de un caso laboral:
 
 ## Modelo de Datos
 
-Clamo organiza la información en una jerarquía clara:
+Clamo organiza la información en una jerarquía clara con **Trusted Sources**:
 
 ```
 Empresa (Tenant)
 ├── Entidades Monitoreadas (RUCs)
 │   └── Casos (Expedientes)
+│       ├── Campos SourcedValue (CEJ → AI → Manual)
+│       │   ├── subjectMatter (Materia)
+│       │   ├── processType (Tipo de Proceso)
+│       │   ├── stage (Etapa)
+│       │   └── abstract (Sumilla)
 │       ├── Movimientos
 │       ├── Hitos Procesales
 │       ├── Documentos
@@ -78,22 +83,25 @@ Empresa (Tenant)
     └── Miembros
 ```
 
+<Note>
+**Patrón Trusted Source**: Los campos de caso como `subjectMatter`, `processType` y `stage` usan una estructura JSON que almacena valores de múltiples fuentes (scraper CEJ, normalización IA, corrección manual). La prioridad de resolución es: **Manual > AI > CEJ**.
+</Note>
+
 ## Próximos Pasos
 
 <CardGroup cols={2}>
   <Card
     title="Arquitectura"
     icon="sitemap"
-    href="/inicio/arquitectura"
+    href="/es/inicio/arquitectura"
   >
     Conoce los componentes técnicos de la plataforma.
   </Card>
   <Card
     title="Inicio Rápido"
     icon="rocket"
-    href="/inicio/inicio-rapido"
+    href="/es/inicio/inicio-rapido"
   >
     Comienza a integrar Clamo en tu aplicación.
   </Card>
 </CardGroup>
-

@@ -63,12 +63,17 @@ Clamo automates and centralizes the entire lifecycle of a labor case:
 
 ## Data Model
 
-Clamo organizes information in a clear hierarchy:
+Clamo organizes information in a clear hierarchy with **Trusted Sources**:
 
 ```
 Company (Tenant)
 ├── Monitored Entities (RUCs)
 │   └── Cases (Files)
+│       ├── SourcedValue Fields (CEJ → AI → Manual)
+│       │   ├── subjectMatter
+│       │   ├── processType
+│       │   ├── stage
+│       │   └── abstract
 │       ├── Movements
 │       ├── Procedural Milestones
 │       ├── Documents
@@ -77,6 +82,10 @@ Company (Tenant)
     ├── Administrators
     └── Members
 ```
+
+<Note>
+**Trusted Source Pattern**: Case fields like `subjectMatter`, `processType`, and `stage` use a JSON structure that stores values from multiple sources (CEJ scraper, AI normalization, manual correction). The resolution priority is: **Manual > AI > CEJ**.
+</Note>
 
 ## Next Steps
 
@@ -89,11 +98,10 @@ Company (Tenant)
     Learn about the platform's technical components.
   </Card>
   <Card
-    title="Quickstart"
+    title="Quick Start"
     icon="rocket"
-    href="/en/getting-started/quickstart"
+    href="/en/getting-started/quick-start"
   >
     Start integrating Clamo into your application.
   </Card>
 </CardGroup>
-

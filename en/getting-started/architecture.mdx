@@ -13,7 +13,6 @@ Clamo is built as a distributed microservices architecture, optimized for legal 
 flowchart TB
     subgraph Frontend [Frontend Layer]
         WebApp[clamo-web-app<br/>Next.js 15]
-        DesktopApp[clamo-desktop-app<br/>Electron]
         UI[clamo-ui<br/>Components]
     end
 
@@ -25,10 +24,14 @@ flowchart TB
         Widget[clamo-widget-server<br/>TypeScript]
     end
 
-    subgraph AI [AI Assistants]
-        AskClamo[ask-clamo<br/>LangGraph]
-        Javi[javi<br/>Cases]
-        Clamy[clamy<br/>Analytics]
+    subgraph AI [Unified AI Assistant]
+        AskClamo[luna / ask-clamo<br/>LangGraph Platform]
+        subgraph Profiles [Profiles]
+            Javi[Javi<br/>Cases]
+            Clamy[Clamy<br/>Analytics]
+            Luna[Luna<br/>Global]
+        end
+        ClamoTools[clamo-tools<br/>Olive Framework]
     end
 
     subgraph Pipeline [Data Pipeline]
@@ -45,13 +48,14 @@ flowchart TB
 
     WebApp --> Tenant
     WebApp --> Cases
-    DesktopApp --> Cases
+    WebApp --> AskClamo
     Tenant --> DB
     Cases --> DB
     CEJ --> Ingest
     Ingest --> DB
     Sync --> Analytics
-    AskClamo --> Cases
+    AskClamo --> ClamoTools
+    ClamoTools --> Cases
 ```
 
 ## Components by Layer
@@ -61,7 +65,6 @@ flowchart TB
 | Service | Technology | Description |
 |---------|------------|-------------|
 | `clamo-web-app` | Next.js 15, React 19 | Main web application with dashboard, case management, and onboarding |
-| `clamo-desktop-app` | Electron, TypeScript | Desktop application for offline access |
 | `clamo-ui` | React, Radix UI | Shared component library |
 
 ### API Layer
@@ -74,13 +77,16 @@ flowchart TB
 | `clamo-dashboards` | Rust, Axum | 8020 | Dashboard and customizable widgets API |
 | `clamo-widget-server` | TypeScript | 3005 | Embeddable widgets server |
 
-### AI Assistants
+### Unified AI Assistant
 
 | Service | Technology | Description |
 |---------|------------|-------------|
-| `ask-clamo` | LangGraph, Python | Unified agent that consolidates Javi, Clamy, and Luna |
-| `javi` | LangGraph, Python | Assistant specialized in case queries |
-| `clamy` | LangGraph, Python | Analytics assistant with MCP/Tinybird integration |
+| `luna` / `ask-clamo` | LangGraph, Python | Unified service containing the Javi, Clamy, and Luna profiles |
+| `clamo-tools` | Python, Olive | Remote tools server for the AI assistant |
+
+<Note>
+**Unified Architecture:** Javi, Clamy, and Luna are no longer separate services. They are **profiles** (tool profiles) within the unified `luna` service. The frontend sends `assistant_name` in the request to select the active profile.
+</Note>
 
 ### Data Pipeline
 

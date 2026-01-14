@@ -25,21 +25,21 @@ Clamo utiliza WorkOS AuthKit para autenticación. El token de sesión se obtiene
 import { getSession } from '@workos-inc/authkit-nextjs';
 
 const session = await getSession();
-const token = session?.accessToken;
+const accessToken = session?.accessToken;
 ```
 
 ```python Python
 # El token se obtiene del flujo de autenticación WorkOS
-# y se pasa en el header x-clamo-session
-import base64
-import json
+# En producción, Kong valida el JWT e inyecta headers x-workos-*
+from workos import WorkOS
 
-session_data = {
-    "userId": "user_123",
-    "organizationId": "org_456",
-    "email": "usuario@empresa.com"
-}
-token = base64.urlsafe_b64encode(json.dumps(session_data).encode()).decode()
+workos = WorkOS(api_key=os.environ["WORKOS_API_KEY"])
+# Después del callback OAuth
+auth_response = workos.user_management.authenticate_with_code(
+    client_id=os.environ["WORKOS_CLIENT_ID"],
+    code=auth_code,
+)
+access_token = auth_response.access_token
 ```
 
 </CodeGroup>
@@ -50,9 +50,12 @@ Todas las solicitudes a Clamo requieren los siguientes headers:
 
 ```bash
 Authorization: Bearer <workos_access_token>
-x-clamo-session: <base64_encoded_session>
 Content-Type: application/json
 ```
+
+<Note>
+**Nota sobre `x-clamo-session`:** Este header es **legacy** y solo se usa en desarrollo local sin Kong. En producción, Kong valida el JWT e inyecta los headers `x-workos-*` automáticamente.
+</Note>
 
 ## Paso 3: Obtener Información del Usuario
 
@@ -62,7 +65,6 @@ Content-Type: application/json
 const response = await fetch('https://api.clamo.dev/v1/me', {
   headers: {
     'Authorization': `Bearer ${accessToken}`,
-    'x-clamo-session': sessionToken,
   },
 });
 
@@ -85,7 +87,6 @@ response = httpx.get(
     "https://api.clamo.dev/v1/me",
     headers={
         "Authorization": f"Bearer {access_token}",
-        "x-clamo-session": session_token,
     }
 )
 
@@ -95,8 +96,7 @@ print(user)
 
 ```bash cURL
 curl -X GET https://api.clamo.dev/v1/me \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "x-clamo-session: $SESSION_TOKEN"
+  -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 </CodeGroup>
@@ -111,7 +111,6 @@ Una vez autenticado, puedes obtener los casos de tu empresa:
 const response = await fetch('https://api.clamo.dev/v1/cases', {
   headers: {
     'Authorization': `Bearer ${accessToken}`,
-    'x-clamo-session': sessionToken,
   },
 });
 
@@ -129,7 +128,6 @@ response = httpx.get(
     "https://api.clamo.dev/v1/cases",
     headers={
         "Authorization": f"Bearer {access_token}",
-        "x-clamo-session": session_token,
     }
 )
 
@@ -140,8 +138,7 @@ for caso in data["data"]:
 
 ```bash cURL
 curl -X GET "https://api.clamo.dev/v1/cases" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "x-clamo-session: $SESSION_TOKEN"
+  -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
 </CodeGroup>
@@ -156,7 +153,6 @@ const caseId = 'case_abc123';
 const response = await fetch(`https://api.clamo.dev/v1/cases/${caseId}`, {
   headers: {
     'Authorization': `Bearer ${accessToken}`,
-    'x-clamo-session': sessionToken,
   },
 });
 
@@ -165,6 +161,9 @@ const caso = await response.json();
 console.log('Expediente:', caso.expediente);
 console.log('Movimientos:', caso.movements.length);
 console.log('Último movimiento:', caso.movements[0]?.description);
+
+// Campos SourcedValue - valor resuelto
+console.log('Materia:', caso.subjectMatter); // Resuelto de manual > ai > cej
 ```
 
 ```python Python
@@ -174,7 +173,6 @@ response = httpx.get(
     f"https://api.clamo.dev/v1/cases/{case_id}",
     headers={
         "Authorization": f"Bearer {access_token}",
-        "x-clamo-session": session_token,
     }
 )
 
@@ -192,11 +190,10 @@ Aquí tienes un ejemplo completo de integración:
 ```javascript
 // clamo-client.js
 class ClamoClient {
-  constructor(accessToken, sessionToken) {
+  constructor(accessToken) {
     this.baseUrl = 'https://api.clamo.dev';
     this.headers = {
       'Authorization': `Bearer ${accessToken}`,
-      'x-clamo-session': sessionToken,
       'Content-Type': 'application/json',
     };
   }
@@ -239,7 +236,7 @@ class ClamoClient {
 }
 
 // Uso
-const client = new ClamoClient(accessToken, sessionToken);
+const client = new ClamoClient(accessToken);
 const user = await client.getMe();
 const cases = await client.listCases({ status: 'EN_TRAMITE' });
 ```
@@ -262,16 +259,15 @@ const cases = await client.listCases({ status: 'EN_TRAMITE' });
   <Card
     title="Autenticación"
     icon="key"
-    href="/guias/autenticacion"
+    href="/es/guias/autenticacion"
   >
     Aprende más sobre el flujo de autenticación con WorkOS.
   </Card>
   <Card
     title="API Reference"
     icon="code"
-    href="/api-reference/introduccion"
+    href="/es/api-reference/introduccion"
   >
     Documentación completa de todos los endpoints.
   </Card>
 </CardGroup>
-
