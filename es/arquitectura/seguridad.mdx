@@ -1,127 +1,275 @@
 ---
 title: Seguridad
-description: Arquitectura de autenticación, autorización y gestión de secretos
+description: Arquitectura de autenticación, autorización, aislamiento de tenants y cadena de confianza
 ---
 
 # Arquitectura de Seguridad
 
-Clamo implementa una arquitectura de seguridad integral que cubre autenticación, autorización, aislamiento multi-tenant y gestión de secretos.
+Clamo implementa una arquitectura de seguridad integral basada en una **cadena de confianza** que garantiza el aislamiento completo entre tenants.
 
-## Visión General
+## La Cadena de Confianza
 
 ```mermaid
 flowchart TB
-    subgraph Auth [Capa de Autenticación]
-        WorkOS[WorkOS AuthKit<br/>Enterprise SSO]
-        Session[Gestión de Sesiones]
+    subgraph Trust [Cadena de Confianza]
+        WorkOS[1. WorkOS<br/>Fuente de Verdad]
+        Kong[2. Kong<br/>Validador]
+        Service[3. Servicio<br/>Confía en Kong]
+        Control[4. Control DB<br/>Mapeador]
+        Tenant[5. Tenant DB<br/>Vault]
     end
     
-    subgraph Control [Control Plane]
-        Supabase[(Supabase<br/>PostgreSQL)]
-        Vault[Supabase Vault<br/>Secrets]
-    end
-    
-    subgraph Tenant [Aislamiento de Tenants]
-        Neon1[(Neon DB 1)]
-        Neon2[(Neon DB 2)]
-        NeonN[(Neon DB N)]
-    end
-    
-    subgraph Services [Servicios Backend]
-        TenantSvc[clamo-tenant]
-        CasesSvc[clamo-cases]
-        Sync[clamo-sync]
-    end
-    
-    WorkOS --> Session
-    Session --> TenantSvc
-    Session --> CasesSvc
-    
-    TenantSvc --> Supabase
-    CasesSvc --> Vault
-    Sync --> Vault
-    
-    Vault -->|Desencriptado| Neon1
-    Vault -->|Desencriptado| Neon2
-    Vault -->|Desencriptado| NeonN
+    WorkOS -->|JWT firmado| Kong
+    Kong -->|Headers x-workos-*| Service
+    Service -->|orgId| Control
+    Control -->|companyId| Tenant
 ```
 
-## Autenticación
+| Componente | Responsabilidad |
+|------------|-----------------|
+| **WorkOS** | Genera JWT firmado con llave privada. El `org_id` está DENTRO del JWT firmado. |
+| **Kong** | Verifica firma con llave pública. Si válido → extrae claims a headers. Si inválido → 401. |
+| **Servicio** | Si hay headers `x-workos-*` → Kong ya validó. Usa `org_id` del header, NO del URL. |
+| **Control DB** | Mapea `workosOrgId` → `companyId` interno. Una org solo mapea a una compañía. |
+| **Tenant DB** | Cada compañía tiene su propia base de datos. Sin `companyId` correcto = sin acceso. |
 
-### WorkOS AuthKit
+## El JWT y el Aislamiento de Tenants
 
-Clamo usa [WorkOS AuthKit](https://workos.com/docs/user-management) para autenticación, proporcionando:
+### Anatomía del JWT de WorkOS
 
-- **Email/Password** - Autenticación estándar
-- **Social Login** - Google, Microsoft, GitHub
-- **Enterprise SSO** - SAML, OIDC para clientes enterprise
-- **Directory Sync** - Provisioning automático de usuarios desde IdPs
+Cuando un usuario se autentica, WorkOS genera un JWT firmado:
 
-**Puntos de Integración**:
-- `clamo-web-app` - Usa `@workos-inc/authkit-nextjs` para auth server-side
-- `clamo-tenant` - Sincroniza organizaciones de WorkOS con empresas internas
+```json
+{
+  "sub": "user_123_juanito",
+  "org_id": "org_mbc_workos_id",  // ← FIJO, firmado, no modificable
+  "role": "member",
+  "permissions": ["cases:read", "cases:write"],
+  "iss": "https://api.workos.com/...",
+  "exp": 1234567890
+}
+```
 
-### Flujo de Sesión
+<Warning>
+**Punto Crítico de Seguridad:** El `org_id` está **FIRMADO** dentro del JWT.
+
+- El usuario NO puede cambiar el `org_id` en su token
+- No puede "falsificar" que pertenece a otra organización
+- Si trabaja para MBC, su token SIEMPRE tendrá `org_id = "org_mbc_workos_id"`
+- Si intenta modificar el JWT, la firma se invalida y Kong lo rechaza
+</Warning>
+
+### Flujo de Validación Completo
 
 ```mermaid
 sequenceDiagram
-    participant User as Usuario
-    participant WebApp as clamo-web-app
-    participant WorkOS
-    participant Tenant as clamo-tenant
-    participant DB as Supabase
+    participant U as Usuario (Juanito)
+    participant W as WorkOS
+    participant K as Kong
+    participant A as Auth Middleware
+    participant T as Tenant Middleware
+    participant C as Control DB
+    participant TD as Tenant DB (MBC)
+
+    U->>W: Login con credenciales MBC
+    W->>W: Verifica credenciales
+    W->>U: JWT firmado {org_id: "org_mbc"}
     
-    User->>WebApp: Request de login
-    WebApp->>WorkOS: Redirect a AuthKit
-    WorkOS->>User: UI de autenticación
-    User->>WorkOS: Credenciales
-    WorkOS->>WebApp: Callback con código
-    WebApp->>WorkOS: Intercambiar por tokens
-    WorkOS-->>WebApp: Access + Refresh tokens
-    WebApp->>Tenant: Validar sesión
-    Tenant->>DB: Obtener usuario + empresa
-    DB-->>Tenant: Contexto de usuario
-    Tenant-->>WebApp: Sesión validada
-    WebApp-->>User: Autenticado
+    Note over U: Intenta acceder a BCP
+    U->>K: GET /v1/companies/bcp/cases<br/>Auth: Bearer <token_mbc>
+    
+    K->>K: Verifica firma JWT ✓
+    K->>K: Extrae org_id = "org_mbc"
+    K->>A: Headers: x-workos-org-id: org_mbc
+    
+    A->>A: Parse headers → session
+    A->>T: session.orgId = "org_mbc"
+    
+    Note over T: URL dice "bcp"<br/>pero IGNORA porque<br/>es usuario autenticado
+    
+    T->>C: SELECT id FROM companies<br/>WHERE workos_org_id = 'org_mbc'
+    C->>T: companyId = "mbc"
+    
+    T->>T: getTenantClient("mbc")
+    T->>TD: Connection a DB de MBC
+    
+    Note over T: Busca caso en DB de MBC,<br/>NO en BCP
+    
+    TD->>T: NULL (no existe)
+    T->>U: 404 Not Found
 ```
 
-### Estructura de Tokens
+## Ataques Imposibles
 
-| Token | Propósito | Duración |
-|-------|-----------|----------|
-| Access Token | Autenticación de API | 15 minutos |
-| Refresh Token | Renovación de token | 30 días |
-| Session Token | Estado del frontend | Sesión del navegador |
+### Intento 1: Cambiar el companyId en el URL
 
-## Autorización
-
-### Control de Acceso Basado en Roles (RBAC)
-
-Los usuarios tienen roles asignados dentro de su organización:
-
-| Rol | Permisos |
-|-----|----------|
-| `owner` | Acceso completo, facturación, gestión de usuarios |
-| `admin` | Gestión de usuarios, todas las operaciones de casos |
-| `member` | Acceso estándar a casos |
-| `viewer` | Acceso de solo lectura |
-
-### Aislamiento de Organización
-
-Cada request de API está limitado a la organización del usuario:
-
-```mermaid
-flowchart LR
-    Request[API Request] --> Auth[Auth Middleware]
-    Auth --> Context[Extraer company_id]
-    Context --> Query[Query con Scope]
-    Query --> TenantDB[(Base de Datos del Tenant)]
+```bash
+# Juanito hace este request malicioso:
+GET /v1/companies/bcp/cases/def
+Authorization: Bearer <token_de_juanito_con_org_mbc>
 ```
 
-El `company_id` se extrae de la sesión autenticada y se usa para:
-1. Enrutar a la base de datos correcta del tenant
-2. Filtrar todas las queries a los datos de ese tenant
-3. Aplicar row-level security
+**¿Qué pasa?**
+
+```typescript
+// 1. Kong decodifica el JWT
+const jwtPayload = {
+  sub: "user_123_juanito",
+  org_id: "org_mbc_workos_id"  // ← MBC, no BCP
+};
+
+// 2. Kong inyecta headers
+// x-workos-org-id: org_mbc_workos_id  ← El REAL del token
+
+// 3. Auth Middleware crea session
+session = {
+  userId: "user_123_juanito",
+  orgId: "org_mbc_workos_id",  // ← Tomado del header, no del URL
+};
+
+// 4. Tenant Middleware IGNORA el URL para usuarios autenticados
+const requestedCompanyId = c.req.param("companyId");  // "bcp" del URL
+// ⚠️ PERO NO LO USA si es usuario autenticado!
+
+// En su lugar, hace lookup por orgId:
+const company = await controlDb.company.findUnique({
+  where: { workosOrgId: session.orgId }  // ← Usa "org_mbc_workos_id"
+});
+// Resultado: company.id = "mbc"
+
+// 5. Obtiene DB de MBC (no BCP)
+const tenantDb = await getTenantClient({
+  companyId: "mbc",  // ← Siempre la del token
+  connectionString: "postgres://...mbc..."
+});
+```
+
+**Resultado:** Busca el caso en la base de datos de MBC, no en BCP. Si no existe, devuelve 404.
+
+### Intento 2: Modificar el JWT para cambiar org_id
+
+```bash
+# Juanito intenta crear un JWT falso:
+# Cambia manualmente org_id de "org_mbc" a "org_bcp"
+```
+
+**¿Qué pasa?**
+
+```typescript
+// 1. Kong valida la firma del JWT
+const isValid = verifyJwtSignature(
+  token,
+  publicKey  // Llave pública de WorkOS
+);
+
+// Resultado: false ❌
+// La firma NO coincide porque modificó el payload
+
+// 2. Kong rechaza el request
+HTTP 401 Unauthorized
+{
+  "error": "invalid_token",
+  "message": "JWT signature verification failed"
+}
+
+// ❌ El request NUNCA llega al servicio
+```
+
+WorkOS firma los JWTs con su llave privada. **Solo WorkOS puede crear JWTs válidos.**
+
+### Intento 3: Robar el JWT de otro usuario
+
+```bash
+# Juanito roba el token de Pedro (que trabaja en BCP)
+GET /v1/companies/bcp/cases/def
+Authorization: Bearer <token_robado_de_pedro>
+```
+
+**¿Qué pasa?**
+
+El request **funciona**... pero Juanito necesitaría robar el token de Pedro.
+
+**Protecciones contra robo de tokens:**
+
+| Protección | Descripción |
+|------------|-------------|
+| **Corta duración** | Tokens expiran en 15-60 minutos |
+| **HTTPS** | Transmisión encriptada |
+| **HttpOnly cookies** | No accesibles por JavaScript |
+| **Revocación** | Usuario puede invalidar sesiones |
+
+## Usuarios Multi-Organización
+
+WorkOS soporta usuarios que trabajan en múltiples compañías:
+
+```typescript
+// Usuario trabaja en MBC y BCP
+const user = {
+  id: "user_juanito",
+  organizations: [
+    { id: "org_mbc", role: "admin" },
+    { id: "org_bcp", role: "member" }
+  ]
+};
+```
+
+### ¿Cómo funciona?
+
+1. En el UI de login, Juanito elige a qué organización entrar
+2. WorkOS genera un JWT **específico para esa org**:
+
+```javascript
+// Si elige MBC:
+const tokenMBC = {
+  sub: "user_juanito",
+  org_id: "org_mbc",
+  role: "admin"
+};
+
+// Si elige BCP:
+const tokenBCP = {
+  sub: "user_juanito",
+  org_id: "org_bcp",
+  role: "member"
+};
+```
+
+3. Para cambiar de org, debe usar un "org switcher" que regenera el JWT
+
+<Note>
+**Implicación:** Incluso con acceso multi-org, el token en ese momento solo representa **UNA** organización. No puede acceder a ambas simultáneamente con un solo token.
+</Note>
+
+## Acceso Interno (Servicio-a-Servicio)
+
+Los servicios internos acceden sin JWT, usando el `companyId` del URL:
+
+```bash
+# Desde un servicio interno (red Tailscale/K8s)
+GET /internal/v1/companies/bcp/cases/def
+# Sin headers de autenticación
+```
+
+**¿Qué pasa?**
+
+```typescript
+// 1. No hay headers → Auth middleware detecta llamada interna
+// 2. Crea session interna
+session = { 
+  principalType: "service", 
+  orgId: "internal", 
+  role: "admin" 
+};
+
+// 3. Tenant middleware detecta principalType === "service"
+// 4. USA companyId del URL: c.req.param("companyId") = "bcp"
+// 5. Obtiene connection string de BCP
+// 6. Accede a tenant DB de BCP
+```
+
+<Warning>
+**¿Por qué es seguro?** La red interna (Tailscale/K8s) es confiable. Solo servicios de Clamo pueden acceder a esta red. Los endpoints `/internal/...` no están expuestos públicamente.
+</Warning>
 
 ## Arquitectura de Base de Datos Multi-Tenant
 
@@ -129,31 +277,27 @@ El `company_id` se extrae de la sesión autenticada y se usa para:
 
 | Plano | Base de Datos | Propósito |
 |-------|---------------|-----------|
-| **Control Plane** | Supabase (PostgreSQL) | Metadatos de tenant, usuarios, datos de referencia |
+| **Control Plane** | Supabase (PostgreSQL) | Metadatos de tenant, usuarios, mapeo org→company |
 | **Data Plane** | Neon (PostgreSQL branches) | Datos de casos aislados por empresa |
 
 ### Aislamiento de Tenants
-
-Cada empresa tiene una branch de base de datos Neon dedicada:
 
 ```mermaid
 flowchart TB
     subgraph Control [Control Plane - Supabase]
         Companies[tabla companies]
         CompanyDB[tabla company_databases]
-        Users[tabla users]
         Vault[(vault.secrets)]
     end
     
     subgraph Data [Data Plane - Neon]
-        Branch1[Branch: company-abc<br/>Cases, Movements]
-        Branch2[Branch: company-xyz<br/>Cases, Movements]
-        Branch3[Branch: company-123<br/>Cases, Movements]
+        Branch1[Branch: company-mbc<br/>Cases, Movements]
+        Branch2[Branch: company-bcp<br/>Cases, Movements]
+        Branch3[Branch: company-xyz<br/>Cases, Movements]
     end
     
-    Companies --> CompanyDB
+    Companies -->|workosOrgId| CompanyDB
     CompanyDB -->|pooledConnSecretId| Vault
-    CompanyDB -->|directConnSecretId| Vault
     
     Vault -->|Decrypt| Branch1
     Vault -->|Decrypt| Branch2
@@ -162,18 +306,17 @@ flowchart TB
 
 ### Seguridad de Connection Strings
 
-Los connection strings se almacenan encriptados en Supabase Vault:
+Los connection strings se almacenan **encriptados** en Supabase Vault:
 
 ```sql
 -- Estructura del Vault
 vault.secrets (
   id uuid,
-  name text,        -- ej., "company-abc-pooled"
+  name text,        -- ej., "company-mbc-pooled"
   secret text,      -- Connection string encriptado
-  ...
 )
 
--- Vista de desencriptación (requiere RLS)
+-- Vista de desencriptación (requiere permisos)
 vault.decrypted_secrets (
   id uuid,
   name text,
@@ -181,26 +324,9 @@ vault.decrypted_secrets (
 )
 ```
 
-Los servicios acceden a los connection strings vía la vista de desencriptación del vault:
-
-```sql
-SELECT 
-  cd.company_id,
-  vs_pooled.decrypted_secret as pooled_connection,
-  vs_direct.decrypted_secret as direct_connection
-FROM company_databases cd
-LEFT JOIN vault.decrypted_secrets vs_pooled 
-  ON vs_pooled.name = cd."pooledConnSecretId"
-LEFT JOIN vault.decrypted_secrets vs_direct 
-  ON vs_direct.name = cd."directConnSecretId"
-WHERE cd.company_id = $1
-```
-
 ## Gestión de Secretos
 
 ### Supabase Vault
-
-Toda la configuración sensible se almacena en Supabase Vault:
 
 | Tipo de Secreto | Ejemplo |
 |-----------------|---------|
@@ -210,56 +336,27 @@ Toda la configuración sensible se almacena en Supabase Vault:
 
 ### Variables de Entorno
 
-Los servicios reciben configuración no sensible vía variables de entorno:
-
 | Variable | Descripción |
 |----------|-------------|
 | `SUPABASE_URL` | URL del control plane |
 | `SUPABASE_SERVICE_KEY` | Service role key (acceso al vault) |
-| `TINYBIRD_HOST` | Endpoint de analytics |
-
-### Integración de clamo-sync con Vault
-
-El servicio de sync en Rust obtiene conexiones de tenants desde el vault:
-
-```rust
-// discovery/supabase.rs
-pub async fn list_tenants(&self) -> Result<Vec<TenantConfig>> {
-    // Usar RPC para ejecutar query con desencriptación del vault
-    let tenants = self.client
-        .rpc("get_active_tenants_with_connections", json!({}))
-        .execute()
-        .await?;
-    
-    Ok(tenants)
-}
-```
+| `WORKOS_API_KEY` | API key de WorkOS |
+| `WORKOS_CLIENT_ID` | Client ID de WorkOS |
 
 ## Seguridad de API
 
-### Autenticación de Requests
+### Headers de Kong (Producción)
 
-Todos los endpoints de API requieren autenticación:
+En producción, Kong API Gateway valida el JWT y añade headers upstream:
 
-```typescript
-// Patrón de middleware
-app.use("/api/*", async (c, next) => {
-  const token = c.req.header("Authorization")?.replace("Bearer ", "");
-  
-  if (!token) {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  
-  const session = await validateToken(token);
-  c.set("session", session);
-  
-  await next();
-});
-```
+| Header | Descripción |
+|--------|-------------|
+| `x-workos-user-id` | ID del usuario autenticado |
+| `x-workos-org-id` | ID de la organización WorkOS |
+| `x-workos-role` | Rol del usuario en la organización |
+| `x-workos-permissions` | Permisos del usuario |
 
 ### Rate Limiting
-
-Los endpoints de API implementan rate limiting:
 
 | Tipo de Endpoint | Límite |
 |------------------|--------|
@@ -267,51 +364,72 @@ Los endpoints de API implementan rate limiting:
 | Autenticado | 1000 req/min |
 | Webhook | 10 req/seg |
 
-### Configuración CORS
-
-Los requests cross-origin están restringidos a orígenes permitidos:
-
-```typescript
-const corsConfig = {
-  origin: [
-    "https://app.clamo.dev",
-    "https://*.clamo.dev",
-    process.env.NODE_ENV === "development" && "http://localhost:3000",
-  ].filter(Boolean),
-  credentials: true,
-};
-```
-
-## Seguridad de Datos
-
-### Encriptación
+## Encriptación
 
 | Estado de Datos | Método |
 |-----------------|--------|
 | En Reposo | AES-256 (Neon, Supabase) |
 | En Tránsito | TLS 1.3 |
 | Secretos | Encriptación de Supabase Vault |
+| JWTs | RS256 (firma asimétrica) |
 
-### Retención de Datos
+## Resumen: Por Qué el Sistema es Seguro
 
-| Tipo de Datos | Retención |
-|---------------|-----------|
-| Datos de casos | Indefinido (datos del cliente) |
-| Logs de auditoría | 2 años |
-| Datos de sesión | 30 días |
-| Analytics | 1 año |
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  GARANTÍAS DE SEGURIDAD                                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ✅ El org_id está FIRMADO en el JWT                            │
+│     → No se puede falsificar sin la llave privada de WorkOS     │
+│                                                                  │
+│  ✅ Kong valida ANTES de que llegue al servicio                 │
+│     → JWTs inválidos nunca alcanzan la lógica de negocio        │
+│                                                                  │
+│  ✅ El servicio usa org_id del HEADER, no del URL               │
+│     → Manipular el URL no cambia a qué tenant accedes           │
+│                                                                  │
+│  ✅ Cada tenant tiene su propia base de datos                   │
+│     → Aislamiento físico, no solo lógico                        │
+│                                                                  │
+│  ✅ Connection strings encriptados en Vault                     │
+│     → Incluso con acceso al control plane, no ves credenciales  │
+│                                                                  │
+│  ✅ Red interna aislada (Tailscale/K8s)                         │
+│     → Endpoints internos no expuestos públicamente              │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-### Logging de Auditoría
+## Próximos Pasos
 
-Las operaciones críticas se registran:
-
-- Eventos de autenticación de usuarios
-- Acceso a datos (lectura/escritura)
-- Cambios de configuración
-- Uso de API keys
-
-## Documentación Relacionada
-
-- [Guía de Multi-Tenancy](/es/guias/multi-tenancy)
-- [Guía de Autenticación](/es/guias/autenticacion)
-- [Servicio clamo-tenant](/es/servicios/clamo-tenant)
+<CardGroup cols={2}>
+  <Card
+    title="Multi-Tenancy"
+    icon="building"
+    href="/es/guias/multi-tenancy"
+  >
+    Arquitectura de base de datos por tenant.
+  </Card>
+  <Card
+    title="Autenticación"
+    icon="key"
+    href="/es/guias/autenticacion"
+  >
+    Guía de integración con WorkOS.
+  </Card>
+  <Card
+    title="SDKs de Servicio"
+    icon="plug"
+    href="/es/arquitectura/sdks-servicio"
+  >
+    Comunicación servicio-a-servicio.
+  </Card>
+  <Card
+    title="API Reference"
+    icon="code"
+    href="/es/api-reference/introduccion"
+  >
+    Endpoints públicos e internos.
+  </Card>
+</CardGroup>

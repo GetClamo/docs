@@ -1,0 +1,515 @@
+---
+title: RRS Pattern
+description: Repository-Route-Service - The code architecture in Clamo backends
+---
+
+# RRS Pattern (Repository-Route-Service)
+
+The **RRS** pattern is the backbone of how code is organized in Clamo backends (`clamo-cases` and `clamo-tenant`). Understanding it is fundamental to avoid putting business logic in controllers or SQL queries in services.
+
+## Overview
+
+```mermaid
+flowchart LR
+    subgraph Route [Route Layer]
+        R[Hono Route]
+        Z[Zod Validation]
+    end
+    
+    subgraph Service [Service Layer]
+        S[Business Logic]
+        TS[Trusted Source]
+        API[External APIs]
+    end
+    
+    subgraph Repository [Repository Layer]
+        Repo[Repository]
+        Prisma[Prisma Client]
+        DB[(Database)]
+    end
+    
+    R --> Z
+    Z --> S
+    S --> TS
+    S --> API
+    S --> Repo
+    Repo --> Prisma
+    Prisma --> DB
+```
+
+## The Three Layers
+
+### 1. Route (Controller)
+
+**Responsibility:** Validate input and format output. **NOTHING ELSE.**
+
+```typescript
+// ✅ CORRECT: Route only validates and responds
+// clamo-cases/src/routes/cases.ts
+import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
+import { CaseService } from "../services/case.service.js";
+
+const UpdateCaseSchema = z.object({
+  riskLevel: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
+  notes: z.string().max(5000).optional(),
+});
+
+export function createCasesRoutes(deps: { caseService: CaseService }) {
+  const app = new Hono();
+
+  app.patch(
+    "/:id",
+    zValidator("json", UpdateCaseSchema),
+    async (c) => {
+      const id = c.req.param("id");
+      const data = c.req.valid("json");
+      const tenantDb = c.get("tenantDb");
+
+      // Delegate EVERYTHING to the service
+      const result = await deps.caseService.updateCase(tenantDb, id, data);
+
+      return c.json(result);
+    }
+  );
+
+  return app;
+}
+```
+
+<Warning>
+**Anti-pattern:** Business logic in Route
+
+```typescript
+// ❌ INCORRECT: Business logic in controller
+app.patch("/:id", async (c) => {
+  const id = c.req.param("id");
+  const data = c.req.valid("json");
+  const tenantDb = c.get("tenantDb");
+
+  // ❌ This should NOT be here
+  const existingCase = await tenantDb.case.findUnique({ where: { id } });
+  
+  if (existingCase.status === "ARCHIVED") {
+    return c.json({ error: "Cannot update archived case" }, 400);
+  }
+
+  // ❌ Trusted Source logic in controller
+  const currentSource = existingCase.riskLevel?.manual ? "manual" : "ai";
+  if (currentSource === "manual" && data.source === "ai") {
+    return c.json({ error: "Cannot override manual with AI" }, 400);
+  }
+
+  const updated = await tenantDb.case.update({
+    where: { id },
+    data: { riskLevel: data.riskLevel },
+  });
+
+  return c.json(updated);
+});
+```
+</Warning>
+
+### 2. Service (Business Logic)
+
+**Responsibility:** All business logic, domain validations, call orchestration.
+
+```typescript
+// ✅ CORRECT: Service contains the logic
+// clamo-cases/src/services/case.service.ts
+import type { PrismaClient } from "@getclamo/database";
+import { CaseRepository } from "../repositories/case.repository.js";
+import { resolveSourcedValue, canOverwrite } from "../utils/trusted-source.js";
+
+export class CaseService {
+  constructor(private caseRepo: CaseRepository) {}
+
+  async updateCase(
+    tenantDb: PrismaClient,
+    id: string,
+    data: UpdateCaseInput
+  ): Promise<Case> {
+    // 1. Get existing case
+    const existingCase = await this.caseRepo.findById(tenantDb, id);
+
+    if (!existingCase) {
+      throw new NotFoundError("Case not found");
+    }
+
+    // 2. Business validations
+    if (existingCase.status === "ARCHIVED") {
+      throw new BusinessError("Cannot update archived case");
+    }
+
+    // 3. Trusted Source logic
+    const updateData: Partial<CaseUpdateData> = {};
+
+    if (data.riskLevel !== undefined) {
+      const currentRiskLevel = existingCase.riskLevel as SourcedValue;
+      
+      // Check if we can overwrite
+      if (!canOverwrite(currentRiskLevel, "manual")) {
+        throw new BusinessError(
+          "Cannot override manually corrected risk level"
+        );
+      }
+
+      updateData.riskLevel = {
+        ...currentRiskLevel,
+        manual: data.riskLevel,
+        updatedAt: {
+          ...currentRiskLevel.updatedAt,
+          manual: new Date().toISOString(),
+        },
+      };
+    }
+
+    // 4. Delegate persistence to repository
+    return this.caseRepo.update(tenantDb, id, updateData);
+  }
+}
+```
+
+### 3. Repository (Data Access)
+
+**Responsibility:** Interact with the database. **ONLY HERE** is `@getclamo/database` imported.
+
+```typescript
+// ✅ CORRECT: Repository handles Prisma
+// clamo-cases/src/repositories/case.repository.ts
+import type { PrismaClient, Case } from "@getclamo/database";
+
+export class CaseRepository {
+  async findById(db: PrismaClient, id: string): Promise<Case | null> {
+    return db.case.findUnique({
+      where: { id },
+      include: {
+        movements: { orderBy: { cejDate: "desc" }, take: 10 },
+        parties: true,
+      },
+    });
+  }
+
+  async update(
+    db: PrismaClient,
+    id: string,
+    data: Partial<CaseUpdateData>
+  ): Promise<Case> {
+    return db.case.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async findByExpediente(
+    db: PrismaClient,
+    expediente: string
+  ): Promise<Case | null> {
+    return db.case.findUnique({
+      where: { expediente },
+    });
+  }
+
+  async list(
+    db: PrismaClient,
+    filters: CaseFilters,
+    pagination: Pagination
+  ): Promise<{ data: Case[]; total: number }> {
+    const where = this.buildWhereClause(filters);
+
+    const [data, total] = await Promise.all([
+      db.case.findMany({
+        where,
+        skip: (pagination.page - 1) * pagination.limit,
+        take: pagination.limit,
+        orderBy: { [pagination.sortBy]: pagination.sortOrder },
+      }),
+      db.case.count({ where }),
+    ]);
+
+    return { data, total };
+  }
+
+  private buildWhereClause(filters: CaseFilters): Prisma.CaseWhereInput {
+    const where: Prisma.CaseWhereInput = {};
+
+    if (filters.status) {
+      where.status = filters.status;
+    }
+
+    if (filters.riskLevel) {
+      // Filter by resolved SourcedValue
+      where.OR = [
+        { riskLevel: { path: ["manual"], equals: filters.riskLevel } },
+        {
+          AND: [
+            { riskLevel: { path: ["manual"], equals: Prisma.DbNull } },
+            { riskLevel: { path: ["ai"], equals: filters.riskLevel } },
+          ],
+        },
+      ];
+    }
+
+    return where;
+  }
+}
+```
+
+## Directory Structure
+
+```
+clamo-cases/src/
+├── routes/              # Route Layer
+│   ├── cases.ts
+│   ├── movements.ts
+│   └── index.ts
+├── services/            # Service Layer
+│   ├── case.service.ts
+│   ├── movement.service.ts
+│   └── ingest.service.ts
+├── repositories/        # Repository Layer
+│   ├── case.repository.ts
+│   ├── movement.repository.ts
+│   └── index.ts
+├── middleware/          # Middleware (auth, tenant)
+│   ├── auth.ts
+│   └── tenant.ts
+├── utils/               # Shared utilities
+│   ├── trusted-source.ts
+│   └── errors.ts
+└── index.ts             # Entry point
+```
+
+## Dependency Injection
+
+Dependencies are injected at the entry point:
+
+```typescript
+// clamo-cases/src/index.ts
+import { Hono } from "hono";
+import { CaseRepository } from "./repositories/case.repository.js";
+import { CaseService } from "./services/case.service.js";
+import { createCasesRoutes } from "./routes/cases.js";
+
+// Create instances
+const caseRepo = new CaseRepository();
+const caseService = new CaseService(caseRepo);
+
+// Inject into routes
+const app = new Hono();
+app.route("/v1/cases", createCasesRoutes({ caseService }));
+
+export default app;
+```
+
+## Golden Rules
+
+### What each layer CAN do
+
+| Layer | Can | Cannot |
+|-------|-----|--------|
+| **Route** | Validate with Zod, format JSON response, extract params/headers | Business logic, DB queries, external API calls |
+| **Service** | Business logic, domain validations, orchestrate repositories, call external APIs | Direct Prisma queries, format HTTP responses |
+| **Repository** | Prisma queries, build WHERE clauses, handle transactions | Business logic, domain validations |
+
+### Allowed imports
+
+```typescript
+// Route
+import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
+import { SomeService } from "../services/some.service.js";
+// ❌ NO: import { PrismaClient } from "@getclamo/database";
+
+// Service
+import { SomeRepository } from "../repositories/some.repository.js";
+import { ExternalApiClient } from "../clients/external.client.js";
+// ❌ NO: import { Hono } from "hono";
+
+// Repository
+import type { PrismaClient } from "@getclamo/database";
+// ❌ NO: import { Hono } from "hono";
+// ❌ NO: import { SomeService } from "../services/...";
+```
+
+## Complete Example: Create Case
+
+### Route
+
+```typescript
+// routes/cases.ts
+const CreateCaseSchema = z.object({
+  expediente: z.string().regex(/^\d{5}-\d{4}-\d-\d{4}-[A-Z]{2}-[A-Z]{2}-\d{2}$/),
+  monitoredEntityId: z.string().uuid(),
+});
+
+app.post(
+  "/",
+  zValidator("json", CreateCaseSchema),
+  async (c) => {
+    const data = c.req.valid("json");
+    const tenantDb = c.get("tenantDb");
+    const session = c.get("session");
+
+    const result = await deps.caseService.createCase(tenantDb, {
+      ...data,
+      createdBy: session.userId,
+    });
+
+    return c.json(result, 201);
+  }
+);
+```
+
+### Service
+
+```typescript
+// services/case.service.ts
+async createCase(
+  tenantDb: PrismaClient,
+  input: CreateCaseInput
+): Promise<Case> {
+  // 1. Check it doesn't exist
+  const existing = await this.caseRepo.findByExpediente(
+    tenantDb,
+    input.expediente
+  );
+
+  if (existing) {
+    throw new ConflictError("Case with this expediente already exists");
+  }
+
+  // 2. Verify monitored entity exists
+  const entity = await this.entityRepo.findById(
+    tenantDb,
+    input.monitoredEntityId
+  );
+
+  if (!entity) {
+    throw new NotFoundError("Monitored entity not found");
+  }
+
+  // 3. Create case with initial values
+  const caseData: CaseCreateData = {
+    expediente: input.expediente,
+    monitoredEntityId: input.monitoredEntityId,
+    status: "PENDING",
+    // Initial empty SourcedValue
+    subjectMatter: { cej: null, ai: null, manual: null },
+    riskLevel: { cej: null, ai: null, manual: null },
+    createdBy: input.createdBy,
+  };
+
+  return this.caseRepo.create(tenantDb, caseData);
+}
+```
+
+### Repository
+
+```typescript
+// repositories/case.repository.ts
+async create(db: PrismaClient, data: CaseCreateData): Promise<Case> {
+  return db.case.create({
+    data: {
+      id: generateCaseId(),
+      expediente: data.expediente,
+      monitoredEntityId: data.monitoredEntityId,
+      status: data.status,
+      subjectMatter: data.subjectMatter,
+      riskLevel: data.riskLevel,
+      createdBy: data.createdBy,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  });
+}
+```
+
+## Testing by Layer
+
+### Route Test (Integration)
+
+```typescript
+// routes/cases.test.ts
+describe("POST /v1/cases", () => {
+  it("validates expediente format", async () => {
+    const res = await app.request("/v1/cases", {
+      method: "POST",
+      body: JSON.stringify({ expediente: "invalid" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.code).toBe("VALIDATION_ERROR");
+  });
+});
+```
+
+### Service Test (Unit)
+
+```typescript
+// services/case.service.test.ts
+describe("CaseService.createCase", () => {
+  it("throws ConflictError if expediente exists", async () => {
+    const mockRepo = {
+      findByExpediente: vi.fn().mockResolvedValue({ id: "existing" }),
+    };
+
+    const service = new CaseService(mockRepo as any);
+
+    await expect(
+      service.createCase(mockDb, { expediente: "00001-2024-..." })
+    ).rejects.toThrow(ConflictError);
+  });
+});
+```
+
+### Repository Test (Integration)
+
+```typescript
+// repositories/case.repository.test.ts
+describe("CaseRepository.create", () => {
+  it("creates case with correct structure", async () => {
+    const repo = new CaseRepository();
+
+    const result = await repo.create(testDb, {
+      expediente: "00001-2024-0-1234-JR-LA-01",
+      status: "PENDING",
+    });
+
+    expect(result.id).toMatch(/^case_/);
+    expect(result.expediente).toBe("00001-2024-0-1234-JR-LA-01");
+  });
+});
+```
+
+## Benefits of the Pattern
+
+| Benefit | Description |
+|---------|-------------|
+| **Testability** | Each layer can be tested in isolation |
+| **Maintainability** | DB changes don't affect business logic |
+| **Clarity** | You know exactly where to look for each type of code |
+| **Reusability** | Services and Repositories can be reused |
+| **Onboarding** | New developers understand the structure quickly |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Data Model"
+    icon="database"
+    href="/en/architecture/data-model"
+  >
+    SourcedValue pattern for multi-origin data.
+  </Card>
+  <Card
+    title="Service SDKs"
+    icon="plug"
+    href="/en/architecture/service-sdks"
+  >
+    Service-to-service communication.
+  </Card>
+</CardGroup>

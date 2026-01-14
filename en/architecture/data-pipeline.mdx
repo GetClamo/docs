@@ -59,14 +59,18 @@ flowchart TB
 **Key Features**:
 - Mass search by correlative numbers (1-99999)
 - Intelligent stopping when "not found" rate is high
-- Incremental CSV storage to MinIO
+- Incremental storage of search results in CSV to MinIO
 - Real-time Ably notifications when cases are found
+
+<Note>
+**Important**: clamo-cej-discovery stores **search results** in CSV (basic metadata like expediente, parties, date). This is different from the main ingestion pipeline which uses **JSON Envelopes** for complete normalized data.
+</Note>
 
 **Flow**:
 1. Iterate through correlative numbers
 2. Search CEJ for each correlative
 3. Extract basic case metadata
-4. Store results in CSV on MinIO
+4. Store search results in CSV on MinIO
 5. Notify downstream systems of new cases
 
 ### clamo-cej-connector
@@ -194,6 +198,62 @@ flowchart LR
 3. **Milestone Mapping** - Identify important events
 4. **Timeline Segmentation** - Split into stages/substages
 5. **Final Synthesis** - Produce normalized envelope
+
+## Storage Format: JSON Envelopes
+
+<Warning>
+**Important**: The main ingestion pipeline does **NOT use CSV**. Normalized data is stored as **JSON Envelopes** in S3/MinIO.
+</Warning>
+
+### Why JSON and not CSV?
+
+| Aspect | CSV | JSON Envelope |
+|--------|-----|---------------|
+| **Structure** | Flat (rows/columns) | Hierarchical (nested) |
+| **Relationships** | Not supported | Case → Movements → Milestones |
+| **Metadata** | Limited | Rich (LLM artifacts, timestamps) |
+| **Validation** | Manual | Schema (Protobuf/Zod) |
+
+### Envelope Structure
+
+```typescript
+// @getclamo/contracts - NormalizationArtifactsEnvelope
+interface NormalizationArtifactsEnvelope {
+  case: NormalizedCase;           // Case data
+  movements: Movement[];          // List of movements
+  milestones: Milestone[];        // Identified milestones
+  artifacts: {
+    browser: BrowserSessionPayload;  // Scraping session
+    extraction: ExtractionArtifacts; // Parsed HTML
+    llm: LlmArtifacts;               // Claude outputs
+  };
+  metadata: {
+    extractedAt: string;
+    normalizedAt: string;
+    version: string;
+  };
+}
+```
+
+### Storage Path
+
+```
+s3://clamo-envelopes/
+└── cases/
+    └── {YYYY}/
+        └── {MM}/
+            └── {DD}/
+                └── {case_uuid}.json
+```
+
+**Example**: `s3://clamo-envelopes/cases/2024/01/15/case_abc123.json`
+
+### Difference with clamo-cej-discovery
+
+| Service | Format | Bucket | Content |
+|---------|--------|--------|---------|
+| **clamo-cej-discovery** | CSV | `cej-bulk-search` | Basic search metadata |
+| **clamo-cej-connector** | JSON | `clamo-envelopes` | Complete normalized data |
 
 ## Caching Strategy
 
