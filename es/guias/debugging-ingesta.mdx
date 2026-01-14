@@ -1,0 +1,525 @@
+---
+title: Debugging de Ingesta
+description: Guía para diagnosticar fallos de scraping y verificar el estado de CaseIngestRun
+---
+
+# Guía de Debugging de Ingesta
+
+Esta guía explica cómo diagnosticar problemas en el pipeline de ingesta de casos, incluyendo cómo verificar el estado de un `CaseIngestRun` en la base de datos de un tenant.
+
+## Visión General del Pipeline de Ingesta
+
+```mermaid
+flowchart LR
+    subgraph Extraction [Extracción]
+        CEJ[clamo-cej-connector<br/>Scraping + LLM]
+    end
+    
+    subgraph Events [Eventos]
+        K1[Kafka: cej-events]
+        K2[Kafka: cases-ingest]
+    end
+    
+    subgraph Ingestion [Ingesta]
+        API[clamo-cases<br/>Event Router]
+        Ingest[clamo-ingest-go<br/>Batch Insert]
+    end
+    
+    subgraph Storage [Almacenamiento]
+        S3[(S3/MinIO<br/>Envelopes)]
+        DB[(Tenant DB)]
+    end
+    
+    CEJ -->|CASE_READY| K1
+    CEJ -->|Envelope| S3
+    K1 --> API
+    API -->|Validate + Audit| K2
+    K2 --> Ingest
+    Ingest -->|Fetch| S3
+    Ingest -->|COPY| DB
+```
+
+## ¿Qué es un CaseIngestRun?
+
+`CaseIngestRun` es el modelo que rastrea una ejecución individual de extracción/ingesta para un caso. Proporciona **trazabilidad completa** del proceso de scraping.
+
+### Esquema del Modelo
+
+```prisma
+model CaseIngestRun {
+  id                String              @id @default(cuid())
+  expediente        String              // Número de expediente
+  caseId            String?             // ID del caso (si ya existe)
+  source            String              // Fuente: CEJ_CONNECTOR, MANUAL, etc.
+  status            CaseIngestRunStatus @default(RUNNING)
+  movementsFound    Int                 @default(0)
+  movementsInserted Int                 @default(0)
+  errorMessage      String?
+  metadata          Json                @default("{}")
+  startedAt         DateTime            @default(now())
+  completedAt       DateTime?
+  
+  case              Case?               @relation(fields: [caseId], references: [id])
+}
+
+enum CaseIngestRunStatus {
+  RUNNING              // En progreso
+  MOVEMENTS_COMPLETE   // Movimientos procesados
+  ANALYSIS_COMPLETE    // Análisis LLM completado
+  COMPLETED            // Finalizado exitosamente
+  FAILED               // Falló
+}
+```
+
+### Estados de Ingesta
+
+| Estado | Descripción | Siguiente Paso |
+|--------|-------------|----------------|
+| `RUNNING` | Ingesta en progreso | Esperar o verificar logs |
+| `MOVEMENTS_COMPLETE` | Movimientos extraídos e insertados | Esperando análisis LLM |
+| `ANALYSIS_COMPLETE` | Análisis LLM completado | Finalizando |
+| `COMPLETED` | Proceso exitoso | N/A |
+| `FAILED` | Error en el proceso | Ver `errorMessage` |
+
+## Flujo de Estados
+
+```mermaid
+stateDiagram-v2
+    [*] --> RUNNING: Crear IngestRun
+    RUNNING --> MOVEMENTS_COMPLETE: Movimientos insertados
+    RUNNING --> FAILED: Error en extracción
+    MOVEMENTS_COMPLETE --> ANALYSIS_COMPLETE: LLM procesado
+    MOVEMENTS_COMPLETE --> FAILED: Error en análisis
+    ANALYSIS_COMPLETE --> COMPLETED: Finalizado
+    ANALYSIS_COMPLETE --> FAILED: Error final
+    COMPLETED --> [*]
+    FAILED --> [*]
+```
+
+## Verificar Estado de un CaseIngestRun
+
+### Paso 1: Obtener Connection String del Tenant
+
+Primero necesitas la connection string de la base de datos del tenant:
+
+```bash
+# Via API (requiere acceso interno)
+curl http://tenant.internal:4001/internal/v1/companies/cmp_abc123/database-connection
+
+# O via Vault directamente
+psql $CONTROL_DATABASE_URL -c "
+  SELECT decrypted_secret 
+  FROM vault.decrypted_secrets 
+  WHERE name = (
+    SELECT \"pooledConnSecretId\" 
+    FROM \"CompanyDatabase\" 
+    WHERE \"companyId\" = 'cmp_abc123'
+  )
+"
+```
+
+### Paso 2: Consultar CaseIngestRun
+
+```bash
+# Conectar a la base de datos del tenant
+psql "postgresql://user:pass@host:5432/tenant_db"
+```
+
+**Buscar por expediente:**
+
+```sql
+SELECT 
+  id,
+  expediente,
+  "caseId",
+  status,
+  "movementsFound",
+  "movementsInserted",
+  "errorMessage",
+  "startedAt",
+  "completedAt"
+FROM "CaseIngestRun"
+WHERE expediente = '00001-2024-0-1234-JR-LA-01'
+ORDER BY "startedAt" DESC
+LIMIT 5;
+```
+
+**Buscar ingestas fallidas recientes:**
+
+```sql
+SELECT 
+  id,
+  expediente,
+  status,
+  "errorMessage",
+  "startedAt"
+FROM "CaseIngestRun"
+WHERE status = 'FAILED'
+  AND "startedAt" > NOW() - INTERVAL '24 hours'
+ORDER BY "startedAt" DESC;
+```
+
+**Buscar ingestas "pegadas" (RUNNING por mucho tiempo):**
+
+```sql
+SELECT 
+  id,
+  expediente,
+  status,
+  "startedAt",
+  NOW() - "startedAt" as duration
+FROM "CaseIngestRun"
+WHERE status = 'RUNNING'
+  AND "startedAt" < NOW() - INTERVAL '1 hour'
+ORDER BY "startedAt" ASC;
+```
+
+### Paso 3: Verificar Movimientos Asociados
+
+```sql
+-- Ver movimientos del caso
+SELECT 
+  m.id,
+  m.date,
+  m.description,
+  m.classification,
+  m."lastIngestRunId"
+FROM "Movement" m
+JOIN "Case" c ON m."caseId" = c.id
+WHERE c.expediente = '00001-2024-0-1234-JR-LA-01'
+ORDER BY m.date DESC
+LIMIT 10;
+
+-- Contar movimientos por IngestRun
+SELECT 
+  ir.id as ingest_run_id,
+  ir.status,
+  ir."movementsFound",
+  ir."movementsInserted",
+  COUNT(m.id) as actual_movements
+FROM "CaseIngestRun" ir
+LEFT JOIN "Movement" m ON m."lastIngestRunId" = ir.id
+WHERE ir.expediente = '00001-2024-0-1234-JR-LA-01'
+GROUP BY ir.id, ir.status, ir."movementsFound", ir."movementsInserted"
+ORDER BY ir."startedAt" DESC;
+```
+
+## Diagnóstico de Problemas Comunes
+
+### Caso "Pegado" en RUNNING
+
+**Síntomas:** `CaseIngestRun` con status `RUNNING` por más de 1 hora.
+
+**Diagnóstico:**
+
+```sql
+-- Ver detalles del run pegado
+SELECT 
+  id,
+  expediente,
+  metadata,
+  "startedAt",
+  NOW() - "startedAt" as stuck_duration
+FROM "CaseIngestRun"
+WHERE status = 'RUNNING'
+  AND "startedAt" < NOW() - INTERVAL '1 hour';
+```
+
+**Posibles causas:**
+1. Worker de Temporal caído
+2. Timeout en scraping del CEJ
+3. Error no capturado en el workflow
+
+**Solución:**
+
+```bash
+# Verificar workflows en Temporal
+temporal workflow list --namespace clamo-cej --query "WorkflowType='CejExpedienteWorkflow' AND ExecutionStatus='Running'"
+
+# Ver detalle de un workflow específico
+temporal workflow show --workflow-id extract-00001-2024-0-1234-JR-LA-01
+```
+
+### Caso con FAILED
+
+**Síntomas:** `CaseIngestRun` con status `FAILED`.
+
+**Diagnóstico:**
+
+```sql
+SELECT 
+  id,
+  expediente,
+  "errorMessage",
+  metadata,
+  "startedAt"
+FROM "CaseIngestRun"
+WHERE status = 'FAILED'
+  AND expediente = '00001-2024-0-1234-JR-LA-01'
+ORDER BY "startedAt" DESC
+LIMIT 1;
+```
+
+**Errores comunes:**
+
+|| Error | Causa | Solución |
+||-------|-------|----------|
+|| `CAPTCHA_FAILED` | No se pudo resolver CAPTCHA | Reintentar, verificar Steel.dev |
+|| `SESSION_EXPIRED` | Sesión del navegador expiró | Reintentar con nueva sesión |
+|| `CASE_NOT_FOUND` | Expediente no existe en CEJ | Verificar número de expediente |
+|| `LLM_TIMEOUT` | Timeout en llamada a Claude | Reintentar, verificar API key |
+|| `DB_CONNECTION_ERROR` | Error de conexión a tenant DB | Verificar estado de Neon |
+
+### Diferenciar Tipo de Fallo
+
+Es importante distinguir entre diferentes tipos de fallos para aplicar la solución correcta:
+
+| Tipo de Fallo | Origen | Síntomas | Acción |
+|---------------|--------|----------|--------|
+| **Fallo de Scraping** | clamo-cej-connector | `CAPTCHA_FAILED`, `SESSION_EXPIRED`, `CEJ_UNAVAILABLE` | Verificar Steel.dev, reintentar más tarde |
+| **Fallo de LLM** | clamo-cej-connector | `LLM_TIMEOUT`, `LLM_RATE_LIMIT`, `LLM_INVALID_RESPONSE` | Verificar API key, revisar prompts |
+| **Fallo de Ingesta** | clamo-ingest-go | `DB_CONNECTION_ERROR`, `BATCH_INSERT_FAILED`, `ENVELOPE_NOT_FOUND` | Verificar Neon, revisar logs de ingest-go |
+| **Fallo de Kafka** | Mensajería | Consumer lag alto, mensajes no procesados | Verificar brokers, consumer groups |
+
+```bash
+# Identificar origen del fallo por el errorMessage
+psql $TENANT_DATABASE_URL -c "
+  SELECT 
+    CASE 
+      WHEN \"errorMessage\" LIKE '%CAPTCHA%' OR \"errorMessage\" LIKE '%SESSION%' OR \"errorMessage\" LIKE '%CEJ%' 
+        THEN 'SCRAPING'
+      WHEN \"errorMessage\" LIKE '%LLM%' OR \"errorMessage\" LIKE '%Claude%' OR \"errorMessage\" LIKE '%Anthropic%'
+        THEN 'LLM'
+      WHEN \"errorMessage\" LIKE '%DB%' OR \"errorMessage\" LIKE '%connection%' OR \"errorMessage\" LIKE '%COPY%'
+        THEN 'INGESTA'
+      ELSE 'OTRO'
+    END as failure_type,
+    COUNT(*) as count
+  FROM \"CaseIngestRun\"
+  WHERE status = 'FAILED'
+    AND \"startedAt\" > NOW() - INTERVAL '24 hours'
+  GROUP BY failure_type
+  ORDER BY count DESC;
+"
+```
+
+### Ver Stack Trace de Error en Temporal
+
+Para obtener el stack trace completo de un workflow fallido:
+
+```bash
+# Ver historial completo con errores
+temporal workflow show \
+  --workflow-id extract-00001-2024-0-1234-JR-LA-01 \
+  --output json | jq '.events[] | select(.eventType | contains("Failed"))'
+
+# Ver el último error con stack trace
+temporal workflow show \
+  --workflow-id extract-00001-2024-0-1234-JR-LA-01 \
+  --output json | jq '.events[-1]'
+
+# Buscar workflows fallidos en las últimas 24h
+temporal workflow list \
+  --namespace clamo-cej \
+  --query "ExecutionStatus='Failed' AND CloseTime > '$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ)'" \
+  --output json | jq '.[].execution.workflowId'
+```
+
+### Discrepancia en Movimientos
+
+**Síntomas:** `movementsFound` != `movementsInserted`
+
+**Diagnóstico:**
+
+```sql
+SELECT 
+  id,
+  expediente,
+  "movementsFound",
+  "movementsInserted",
+  "movementsFound" - "movementsInserted" as missing,
+  metadata
+FROM "CaseIngestRun"
+WHERE "movementsFound" != "movementsInserted"
+  AND status = 'COMPLETED'
+ORDER BY "startedAt" DESC
+LIMIT 10;
+```
+
+**Posibles causas:**
+1. Movimientos duplicados filtrados
+2. Error parcial en batch insert
+3. Movimientos con datos inválidos
+
+## Verificar Flujo de Eventos Kafka
+
+### Ver Eventos en cej-events
+
+```bash
+# Consumir eventos recientes
+kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic cej-events \
+  --from-beginning \
+  --max-messages 10 \
+  | jq '.'
+```
+
+### Ver Eventos en cases-ingest
+
+```bash
+# Consumir eventos de ingesta
+kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 \
+  --topic cases-ingest \
+  --from-beginning \
+  --max-messages 10 \
+  | jq '.'
+```
+
+### Verificar Consumer Group Lag
+
+```bash
+kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --group clamo-ingest \
+  --describe
+```
+
+## Verificar Envelopes en S3
+
+Los envelopes contienen los datos normalizados del caso:
+
+```bash
+# Listar envelopes recientes
+aws s3 ls s3://clamo-envelopes/cases/ --recursive | tail -20
+
+# Descargar y ver un envelope
+aws s3 cp s3://clamo-envelopes/cases/2024/01/15/case_abc123.json - | jq '.'
+```
+
+## Reintentar Ingesta Fallida
+
+### Via Temporal (Recomendado)
+
+```bash
+# Reiniciar workflow fallido
+temporal workflow reset \
+  --workflow-id extract-00001-2024-0-1234-JR-LA-01 \
+  --reason "Retry after fixing issue" \
+  --type LastWorkflowTask
+```
+
+### Via API Interna
+
+```bash
+# Crear nuevo IngestRun
+curl -X POST http://cases.internal:4000/internal/v1/companies/cmp_abc123/ingest-runs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "expediente": "00001-2024-0-1234-JR-LA-01",
+    "source": "MANUAL_RETRY",
+    "forceRefresh": true
+  }'
+```
+
+## Monitoreo con LangSmith
+
+Para casos donde el análisis LLM falla:
+
+1. Accede a [LangSmith](https://smith.langchain.com)
+2. Filtra por proyecto `clamo-cej`
+3. Busca traces con el expediente
+4. Revisa inputs/outputs de cada etapa LLM
+
+## Queries Útiles de Diagnóstico
+
+### Resumen de Ingestas por Estado (Últimas 24h)
+
+```sql
+SELECT 
+  status,
+  COUNT(*) as count,
+  AVG(EXTRACT(EPOCH FROM ("completedAt" - "startedAt"))) as avg_duration_seconds
+FROM "CaseIngestRun"
+WHERE "startedAt" > NOW() - INTERVAL '24 hours'
+GROUP BY status
+ORDER BY count DESC;
+```
+
+### Casos sin Ingesta Reciente
+
+```sql
+SELECT 
+  c.id,
+  c.expediente,
+  c."updatedAt",
+  MAX(ir."completedAt") as last_ingest
+FROM "Case" c
+LEFT JOIN "CaseIngestRun" ir ON ir."caseId" = c.id AND ir.status = 'COMPLETED'
+GROUP BY c.id, c.expediente, c."updatedAt"
+HAVING MAX(ir."completedAt") < NOW() - INTERVAL '7 days'
+   OR MAX(ir."completedAt") IS NULL
+ORDER BY c."updatedAt" DESC
+LIMIT 20;
+```
+
+### Tasa de Éxito por Fuente
+
+```sql
+SELECT 
+  source,
+  COUNT(*) as total,
+  COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed,
+  COUNT(*) FILTER (WHERE status = 'FAILED') as failed,
+  ROUND(
+    100.0 * COUNT(*) FILTER (WHERE status = 'COMPLETED') / COUNT(*),
+    2
+  ) as success_rate
+FROM "CaseIngestRun"
+WHERE "startedAt" > NOW() - INTERVAL '7 days'
+GROUP BY source
+ORDER BY total DESC;
+```
+
+## Alertas Recomendadas
+
+Configura alertas para:
+
+1. **Ingestas pegadas:** `CaseIngestRun` con `RUNNING` > 2 horas
+2. **Alta tasa de fallos:** > 10% de ingestas fallidas en 1 hora
+3. **Lag de Kafka:** Consumer group lag > 1000 mensajes
+4. **Discrepancia de movimientos:** `movementsFound` - `movementsInserted` > 5
+
+## Documentación Relacionada
+
+<CardGroup cols={2}>
+  <Card
+    title="Pipeline de Datos"
+    icon="diagram-project"
+    href="/es/arquitectura/pipeline-datos"
+  >
+    Arquitectura completa del pipeline.
+  </Card>
+  <Card
+    title="clamo-cej-connector"
+    icon="spider"
+    href="/es/servicios/clamo-cej-connector"
+  >
+    Servicio de scraping del CEJ.
+  </Card>
+  <Card
+    title="clamo-ingest-go"
+    icon="database"
+    href="/es/servicios/clamo-ingest-go"
+  >
+    Servicio de ingesta batch.
+  </Card>
+  <Card
+    title="Depuración General"
+    icon="bug"
+    href="/es/guias/depuracion"
+  >
+    Guía general de troubleshooting.
+  </Card>
+</CardGroup>
