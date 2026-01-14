@@ -1,0 +1,535 @@
+---
+title: Operaciones de Base de Datos
+description: Scripts de migración, dry-run y gestión de bases de datos multi-tenant
+---
+
+# Operaciones de Base de Datos
+
+Esta guía documenta los scripts y procedimientos para gestionar las bases de datos de Clamo, incluyendo migraciones masivas de tenants y el concepto de Dry Run.
+
+## Arquitectura de Datos: Control Plane vs Tenant Data Plane
+
+Clamo implementa una separación estricta entre dos planos de datos:
+
+```mermaid
+flowchart TB
+    subgraph ControlPlane [Control Plane - Supabase]
+        ControlDB[(Control Database)]
+        Vault[Supabase Vault<br/>Secrets Storage]
+        
+        subgraph ControlTables [Tablas de Control]
+            Company[Company]
+            User[User]
+            CompanyDatabase[CompanyDatabase]
+        end
+    end
+    
+    subgraph TenantPlane [Tenant Data Plane - Neon]
+        subgraph Tenant1 [Tenant A Branch]
+            Cases1[Case]
+            Movements1[Movement]
+            Entities1[MonitoredEntity]
+            IngestRuns1[CaseIngestRun]
+        end
+        
+        subgraph Tenant2 [Tenant B Branch]
+            Cases2[Case]
+            Movements2[Movement]
+            Entities2[MonitoredEntity]
+            IngestRuns2[CaseIngestRun]
+        end
+    end
+    
+    ControlDB --> Company
+    ControlDB --> User
+    ControlDB --> CompanyDatabase
+    
+    CompanyDatabase -->|pooledConnSecretId| Vault
+    Vault -->|connectionString| Tenant1
+    Vault -->|connectionString| Tenant2
+```
+
+### Control Plane (Supabase)
+
+El plano de control almacena información **global de la plataforma**:
+
+| Tabla | Descripción |
+|-------|-------------|
+| `Company` | Empresas registradas, plan, estado de onboarding |
+| `User` | Usuarios de todas las empresas, roles |
+| `CompanyDatabase` | Metadata de conexión a bases de datos de tenant |
+
+**Características:**
+- Base de datos única en Supabase
+- Contiene referencias a secretos en Vault (no credenciales en texto plano)
+- Esquema definido en `prisma/control/schema.prisma`
+
+### Tenant Data Plane (Neon)
+
+El plano de datos de tenant almacena **datos específicos de cada empresa**:
+
+| Tabla | Descripción |
+|-------|-------------|
+| `MonitoredEntity` | Entidades (RUCs) monitoreadas |
+| `Case` | Expedientes judiciales |
+| `Movement` | Movimientos procesales |
+| `CaseProgress` | Historial de etapas |
+| `CaseMilestone` | Hitos alcanzados |
+| `CaseIngestRun` | Trazabilidad de ingesta |
+
+**Características:**
+- Una base de datos (branch de Neon) por tenant
+- Aislamiento completo de datos entre empresas
+- Esquema definido en `prisma/tenant/schema.prisma`
+
+## Resolución de Conexiones
+
+El sistema usa `@getclamo/tenant-sdk` para obtener connection strings de forma segura:
+
+```typescript
+import { TenantClient } from "@getclamo/tenant-sdk";
+
+const tenant = new TenantClient({
+  baseUrl: process.env.TENANT_SERVICE_URL,
+});
+
+// Obtener connection string para un tenant
+const { connectionString } = await tenant.internal.getDatabaseConnection(companyId);
+```
+
+### Flujo de Resolución
+
+```mermaid
+sequenceDiagram
+    participant Service as Servicio Backend
+    participant TenantAPI as clamo-tenant
+    participant ControlDB as Control DB
+    participant Vault as Supabase Vault
+    
+    Service->>TenantAPI: GET /internal/v1/companies/:id/database-connection
+    TenantAPI->>ControlDB: SELECT * FROM CompanyDatabase WHERE companyId = :id
+    ControlDB-->>TenantAPI: { pooledConnSecretId: "secret_xxx" }
+    TenantAPI->>Vault: vault.decrypted_secrets WHERE name = "secret_xxx"
+    Vault-->>TenantAPI: connectionString
+    TenantAPI-->>Service: { connectionString: "postgresql://..." }
+```
+
+### Cache de Conexiones
+
+`clamo-database` implementa un pool de conexiones para optimizar el rendimiento:
+
+```typescript
+import { TenantConnectionPool } from '@getclamo/database';
+
+const pool = new TenantConnectionPool({
+  maxConnections: 10,
+  idleTimeout: 30000,  // 30 segundos
+});
+
+// Obtiene conexión del cache o crea una nueva
+const tenantDb = await pool.getConnection(companyId);
+```
+
+### Invalidación de Cache
+
+<Warning>
+**Importante:** Si cambias una connection string en Vault (ej. rotación de credenciales), los servicios **no se enteran automáticamente**. El cache tiene un TTL de 5 minutos por defecto.
+</Warning>
+
+**Opciones para invalidar el cache:**
+
+1. **Esperar el TTL** (5 minutos) - Las conexiones inactivas se limpian automáticamente.
+
+2. **Reiniciar el servicio** - Fuerza la recarga de todas las conexiones.
+   ```bash
+   # En Kubernetes
+   kubectl rollout restart deployment clamo-cases -n clamo
+   ```
+
+3. **Llamar al endpoint de health con force-refresh** (si está implementado):
+   ```bash
+   curl -X POST http://cases.internal:4000/internal/health/refresh-connections
+   ```
+
+**Configuración del cache:**
+
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `TENANT_POOL_MAX_CONNECTIONS` | 10 | Máximo de conexiones por tenant |
+| `TENANT_POOL_IDLE_TIMEOUT` | 30000 | Timeout de inactividad (ms) |
+| `TENANT_POOL_TTL` | 300000 | TTL del cache (5 min) |
+
+## Scripts de Migración
+
+Los scripts de migración están en `clamo-database/scripts/`:
+
+```
+clamo-database/
+├── scripts/
+│   ├── migrate-tenants.ts    # Migración masiva de tenants
+│   ├── migrate-dry-run.ts    # Dry run con contenedores efímeros
+│   ├── migrate-control.ts    # Migración del control plane
+│   └── lib/
+│       └── shared.ts         # Utilidades compartidas
+```
+
+### migrate:tenants - Migración Masiva de Tenants
+
+Este script ejecuta migraciones de Prisma en todas las bases de datos de tenant.
+
+#### Uso Básico
+
+```bash
+# Migrar todos los tenants en staging
+pnpm migrate:tenants stg
+
+# Migrar todos los tenants en producción
+pnpm migrate:tenants prd
+
+# Migrar un tenant específico
+pnpm migrate:tenants prd --company-id <uuid>
+
+# Preview sin ejecutar (dry run)
+pnpm migrate:tenants prd --dry-run
+```
+
+#### Estrategias de Conexión
+
+El script soporta dos estrategias para obtener connection strings:
+
+**1. Via API (default para stg/prd):**
+```bash
+pnpm migrate:tenants prd --via api
+```
+- Llama al endpoint interno de clamo-tenant
+- Requiere acceso Tailscale al servicio
+- Recomendado para uso normal
+
+**2. Via Vault (acceso directo):**
+```bash
+pnpm migrate:tenants prd --via vault
+```
+- Consulta CompanyDatabase y obtiene secretos de Vault directamente
+- NO requiere que clamo-tenant esté corriendo
+- Útil para emergencias o mantenimiento
+
+#### Reglas de Seguridad
+
+El script implementa varias reglas de seguridad:
+
+1. **Solo migra empresas con `databaseStatus=READY`**
+2. **Salta el branch template** (schema-only, sin datos)
+3. **Solo migra DBs asociadas con empresas en control plane**
+
+```typescript
+const targets = companies
+  .filter((c) => c.databaseStatus === "READY")
+  .filter((c) => c.Database !== null)
+  .filter((c) => c.Database?.neonBranchId !== BRANCH_TEMPLATE_ID);
+```
+
+#### Ejemplo de Output
+
+```
+═══════════════════════════════════════════════════════════════
+  Tenant Migration: PRD
+  Strategy: API
+  Dry Run: false
+═══════════════════════════════════════════════════════════════
+
+📊 Found 45 companies to migrate (databaseStatus=READY)
+
+🔗 Tenant Service: https://tenant.prd.clamo.services
+
+─────────────────────────────────────────────────────────────────
+📦 Empresa ABC S.A.C.
+   ID: cmp_abc123
+   Branch: br-xyz-456
+  🚀 Running migrations...
+  ✅ Migration complete
+
+─────────────────────────────────────────────────────────────────
+📦 Empresa XYZ S.A.
+   ID: cmp_xyz789
+   Branch: br-abc-123
+  🚀 Running migrations...
+  ✅ Migration complete
+
+═══════════════════════════════════════════════════════════════
+  Summary
+═══════════════════════════════════════════════════════════════
+  ✅ Migrated: 45
+  ⏭️  Skipped:  0
+  ❌ Failed:   0
+═══════════════════════════════════════════════════════════════
+```
+
+### Concepto de Dry Run
+
+El **Dry Run** permite probar migraciones contra una copia del esquema de producción **sin tocar datos reales**.
+
+#### ¿Cómo Funciona?
+
+```mermaid
+flowchart LR
+    subgraph Production [Producción]
+        ProdDB[(Production DB)]
+    end
+    
+    subgraph DryRun [Dry Run]
+        Docker[Docker Container<br/>PostgreSQL Efímero]
+        Schema[Schema Copy<br/>pg_dump --schema-only]
+    end
+    
+    subgraph Test [Test]
+        Migration[prisma migrate deploy]
+        Result{¿Éxito?}
+    end
+    
+    ProdDB -->|pg_dump| Schema
+    Schema -->|psql| Docker
+    Docker --> Migration
+    Migration --> Result
+    Result -->|Sí| Safe[✅ Safe to deploy]
+    Result -->|No| Fix[❌ Fix migrations]
+```
+
+#### Uso del Dry Run
+
+```bash
+# Test both control & tenant planes
+pnpm dry-run prd
+
+# Test only control plane
+pnpm dry-run prd --plane control
+
+# Test only tenant plane
+pnpm dry-run prd --plane tenant
+
+# Test specific tenant
+pnpm dry-run prd --company-id <uuid>
+
+# Use vault strategy
+pnpm dry-run prd --via vault
+```
+
+#### Ejemplo de Output
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║              🧪 DRY-RUN DATABASE MIGRATIONS (Ephemeral)              ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  Environment:   PRD                                                  ║
+║  Planes:        CONTROL + TENANT                                     ║
+║  Strategy:      VAULT                                                ║
+║  Tenant scope:  ALL (using template)                                 ║
+║  Timeout:       20 minutes                                           ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+══════════════════════════════════════════════════════════════════════
+  📋 CONTROL PLANE (Supabase)
+══════════════════════════════════════════════════════════════════════
+
+    🐳 Starting ephemeral container: dry-run-control-1705234567
+    ✅ Container ready
+    📥 Dumping schema from production control...
+    📤 Restoring to ephemeral container...
+    🚀 Running control migrations...
+    ✅ Control migrations would apply cleanly
+
+══════════════════════════════════════════════════════════════════════
+  📋 TENANT PLANE (Neon)
+══════════════════════════════════════════════════════════════════════
+
+    🔍 Using template branch from PRD_TENANT_DATABASE_URL
+    ✅ Source: template branch (from env)
+    🐳 Starting ephemeral container: dry-run-tenant-1705234567
+    ✅ Container ready
+    📥 Dumping schema from template branch...
+    📤 Restoring to ephemeral container...
+    🚀 Running tenant migrations...
+    ✅ Tenant migrations would apply cleanly
+
+══════════════════════════════════════════════════════════════════════
+  ✅ DRY-RUN SUCCESSFUL - All migrations would apply cleanly
+══════════════════════════════════════════════════════════════════════
+
+To apply migrations for real:
+
+  pnpm migrate:control prd
+  pnpm migrate:tenants prd --via vault
+```
+
+### migrate:control - Migración del Control Plane
+
+```bash
+# Migrar control plane en staging
+pnpm migrate:control stg
+
+# Migrar control plane en producción
+pnpm migrate:control prd
+```
+
+## Variables de Entorno Requeridas
+
+```bash
+# Control database (Supabase)
+CONTROL_DATABASE_URL=postgresql://user:pass@host:5432/control?sslmode=require
+
+# Para producción (alternativa)
+PRD_CONTROL_DATABASE_URL=postgresql://...
+
+# Tenant service URL (para --via api)
+TENANT_SERVICE_URL=https://tenant.prd.clamo.services
+# O por ambiente
+TENANT_SERVICE_URL_STG=https://tenant.stg.clamo.dev
+TENANT_SERVICE_URL_PRD=https://tenant.prd.clamo.services
+
+# Branch template ID (para dry-run)
+PRD_TENANT_BRANCH_TEMPLATE_ID=br-xxx-yyy
+
+# Tenant database URL (alternativa para dry-run)
+PRD_TENANT_DATABASE_URL=postgresql://...
+```
+
+## Crear Nueva Migración
+
+### Para el Esquema de Control
+
+```bash
+cd clamo-database
+
+# Crear migración
+npx prisma migrate dev --schema=prisma/control/schema.prisma --name add_new_field
+
+# Generar cliente
+pnpm db:generate
+```
+
+### Para el Esquema de Tenant
+
+```bash
+cd clamo-database
+
+# Crear migración
+npx prisma migrate dev --schema=prisma/tenant/schema.prisma --name add_new_field
+
+# Generar cliente
+pnpm db:generate
+```
+
+## Flujo de Trabajo Recomendado
+
+```mermaid
+flowchart TD
+    A[Crear migración local] --> B[Test local con docker]
+    B --> C[Commit & Push]
+    C --> D[Dry Run en STG]
+    D --> E{¿Éxito?}
+    E -->|No| F[Fix migration]
+    F --> A
+    E -->|Sí| G[Deploy a STG]
+    G --> H[Migrate STG tenants]
+    H --> I[Verificar STG]
+    I --> J[Dry Run en PRD]
+    J --> K{¿Éxito?}
+    K -->|No| F
+    K -->|Sí| L[Deploy a PRD]
+    L --> M[Migrate PRD tenants]
+```
+
+### Comandos del Flujo
+
+```bash
+# 1. Desarrollo local
+cd clamo-database
+npx prisma migrate dev --schema=prisma/tenant/schema.prisma --name my_migration
+
+# 2. Test local
+pnpm migrate:tenants local
+
+# 3. Dry run en staging
+pnpm dry-run stg
+
+# 4. Migrar staging
+pnpm migrate:tenants stg
+
+# 5. Dry run en producción
+pnpm dry-run prd
+
+# 6. Migrar producción
+pnpm migrate:tenants prd
+```
+
+## Troubleshooting
+
+### Error: "Company not found in tenant service"
+
+```bash
+# Verificar que la empresa existe y tiene databaseStatus=READY
+psql $CONTROL_DATABASE_URL -c "
+  SELECT id, name, \"databaseStatus\" 
+  FROM \"Company\" 
+  WHERE id = 'cmp_xxx'
+"
+```
+
+### Error: "Secret not found in vault"
+
+```bash
+# Verificar que el secreto existe
+psql $CONTROL_DATABASE_URL -c "
+  SELECT cd.\"pooledConnSecretId\"
+  FROM \"CompanyDatabase\" cd
+  WHERE cd.\"companyId\" = 'cmp_xxx'
+"
+
+# Verificar en vault
+psql $CONTROL_DATABASE_URL -c "
+  SELECT name FROM vault.decrypted_secrets 
+  WHERE name LIKE 'tenant-%'
+"
+```
+
+### Error: "Migration failed"
+
+```bash
+# Ver estado de migraciones
+DATABASE_URL="postgresql://..." npx prisma migrate status --schema=prisma/tenant/schema.prisma
+
+# Forzar resolución (CUIDADO)
+DATABASE_URL="postgresql://..." npx prisma migrate resolve --applied "migration_name" --schema=prisma/tenant/schema.prisma
+```
+
+## Documentación Relacionada
+
+<CardGroup cols={2}>
+  <Card
+    title="Multi-Tenancy"
+    icon="building"
+    href="/es/guias/multi-tenancy"
+  >
+    Arquitectura multi-tenant completa.
+  </Card>
+  <Card
+    title="clamo-database"
+    icon="database"
+    href="/es/servicios/clamo-database"
+  >
+    Documentación del paquete de base de datos.
+  </Card>
+  <Card
+    title="clamo-tenant"
+    icon="server"
+    href="/es/servicios/clamo-tenant"
+  >
+    Servicio de gestión de tenants.
+  </Card>
+  <Card
+    title="Depuración"
+    icon="bug"
+    href="/es/guias/depuracion"
+  >
+    Guía general de troubleshooting.
+  </Card>
+</CardGroup>

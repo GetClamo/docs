@@ -57,6 +57,13 @@
                   "es/guias/depuracion",
                   "es/guias/despliegue"
                 ]
+              },
+              {
+                "group": "Operaciones",
+                "pages": [
+                  "es/guias/operaciones-base-datos",
+                  "es/guias/debugging-ingesta"
+                ]
               }
             ]
           },
