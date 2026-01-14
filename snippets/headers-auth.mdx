@@ -158,24 +158,29 @@ async function callTenantService(companyId: string, session: Session) {
 }
 ```
 
-### Llamadas desde Agentes IA
+### Llamadas desde el Asistente IA
 
-Los agentes IA (Luna, Javi) propagan headers cuando llaman a APIs backend:
+El asistente IA unificado (luna/ask-clamo) propaga headers cuando llama a APIs backend a través de clamo-tools:
 
 ```python
-# luna/src/luna/tools/case_api.py
-async def call_cases_api(endpoint: str, session: Session):
-    headers = {
-        "x-workos-user-id": session.user_id,
-        "x-workos-org-id": session.org_id,
-    }
+# luna/src/luna/tools/olive_client.py
+async def call_olive_tool(tool_name: str, ctx: AppContext) -> dict:
+    # Los headers se construyen desde el contexto de sesión
+    headers = None
+    if ctx.session and ctx.session.principal_type == "user":
+        headers = {
+            "x-workos-user-id": ctx.session.user_id,
+            "x-workos-org-id": ctx.session.org_id,
+        }
     
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{settings.clamo_cases_url}{endpoint}",
-            headers=headers,
-        )
-        return response.json()
+    return await olive_client.call_tool(
+        tool_name,
+        {
+            "case_id": ctx.case_id,
+            "company_id": ctx.company_id,
+            "headers": headers,
+        }
+    )
 ```
 
 ---
