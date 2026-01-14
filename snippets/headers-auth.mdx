@@ -3,13 +3,33 @@ title: Headers de Autenticación
 description: Headers requeridos para autenticarse con las APIs de Clamo
 ---
 
-## Headers Requeridos
+## Headers de Autenticación
 
-Todas las requests a las APIs de Clamo requieren estos headers:
+Clamo usa un sistema de autenticación en dos capas: WorkOS para identidad y headers internos para contexto de tenant.
+
+### Flujo de Autenticación
+
+```mermaid
+sequenceDiagram
+    participant Client as Cliente (Web App)
+    participant Kong as Kong Gateway
+    participant Service as Backend Service
+    
+    Client->>Kong: Request + Authorization: Bearer <JWT>
+    Kong->>Kong: Validar JWT de WorkOS
+    Kong->>Service: Request + x-workos-* headers
+    Service->>Service: Extraer contexto de headers
+    Service-->>Client: Response
+```
+
+---
+
+## Headers para Endpoints Públicos
+
+Todas las requests a endpoints públicos (`/v1/...`) requieren estos headers:
 
 ```bash
 Authorization: Bearer <workos_access_token>
-x-clamo-session: <base64_encoded_session>
 Content-Type: application/json
 ```
 
@@ -22,11 +42,16 @@ const { accessToken } = await getSession();
 // Usar en header: `Bearer ${accessToken}`
 ```
 
-### x-clamo-session
+### x-clamo-session (Legacy/Auxiliar)
 
-Sesión de Clamo codificada en base64:
+<Warning>
+**Nota sobre `x-clamo-session`:** Este header es **legacy** y se usa principalmente en desarrollo local donde no hay Kong. En producción, los servicios backend confían en los headers `x-workos-*` que Kong inyecta después de validar el JWT.
+
+El frontend aún lo envía por compatibilidad, pero los backends **no deben depender de él** para autenticación - deben usar `x-workos-user-id` y `x-workos-org-id`.
+</Warning>
 
 ```javascript
+// Solo para desarrollo local sin Kong
 const sessionData = {
   userId: "usr_abc123",
   workosUserId: "user_01HQMK...",
@@ -46,7 +71,151 @@ const sessionToken = Buffer.from(
 ```bash
 curl -X GET https://api.clamo.dev/v1/cases \
   -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
-  -H "x-clamo-session: eyJ1c2VySWQiOiJ1c3JfYWJjMTIzIiwiY29tcGFueUlkIjoiY21wX2RlZjQ1NiJ9" \
   -H "Content-Type: application/json"
 ```
 
+---
+
+## Headers de Kong (Producción)
+
+En producción, Kong API Gateway valida el JWT de WorkOS y añade headers upstream que los servicios backend pueden confiar:
+
+| Header | Descripción | Ejemplo |
+|--------|-------------|---------|
+| `x-workos-user-id` | ID del usuario autenticado | `user_01HQMK...` |
+| `x-workos-org-id` | ID de la organización WorkOS | `org_01HQML...` |
+| `x-workos-role` | Rol del usuario en la organización | `admin`, `member` |
+| `x-workos-permissions` | Permisos del usuario (JSON array) | `["cases:read","cases:write"]` |
+
+### Configuración de Kong
+
+Kong extrae estos valores del JWT y los pasa como headers upstream:
+
+```json
+{
+  "upstream_headers_names": [
+    "x-workos-user-id",
+    "x-workos-org-id", 
+    "x-workos-role",
+    "x-workos-permissions"
+  ]
+}
+```
+
+### Uso en Backend Services
+
+Los servicios backend extraen el contexto de estos headers:
+
+```typescript
+// clamo-cases/src/middleware/auth.ts
+export function extractAuthContext(c: Context) {
+  const userId = c.req.header("x-workos-user-id");
+  const orgId = c.req.header("x-workos-org-id");
+  
+  if (!userId || !orgId) {
+    throw new UnauthorizedError("Missing authentication headers");
+  }
+  
+  return { userId, orgId };
+}
+```
+
+---
+
+## Comunicación Servicio-a-Servicio
+
+Las llamadas internas entre microservicios usan un modelo de **trust de red interna**:
+
+### Endpoints Internos (`/internal/v1/...`)
+
+- **NO requieren** header `Authorization`
+- **NO pasan por Kong**
+- Solo accesibles desde la red interna (Tailscale/VPC)
+- Pueden recibir headers de contexto opcionales
+
+```bash
+# Llamada interna (sin auth)
+curl http://tenant.internal:4001/internal/v1/companies/cmp_abc123/database-connection
+```
+
+### Propagación de Contexto
+
+Cuando un servicio llama a otro, propaga los headers de contexto:
+
+```typescript
+// Llamada de clamo-cases a clamo-tenant
+async function callTenantService(companyId: string, session: Session) {
+  const response = await fetch(
+    `${TENANT_SERVICE_URL}/v1/companies/${companyId}`,
+    {
+      headers: {
+        "x-workos-user-id": session.userId,
+        "x-workos-org-id": session.orgId,
+      },
+    }
+  );
+  return response.json();
+}
+```
+
+### Llamadas desde Agentes IA
+
+Los agentes IA (Luna, Javi) propagan headers cuando llaman a APIs backend:
+
+```python
+# luna/src/luna/tools/case_api.py
+async def call_cases_api(endpoint: str, session: Session):
+    headers = {
+        "x-workos-user-id": session.user_id,
+        "x-workos-org-id": session.org_id,
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{settings.clamo_cases_url}{endpoint}",
+            headers=headers,
+        )
+        return response.json()
+```
+
+---
+
+## Resumen de Headers por Tipo de Request
+
+| Tipo de Request | Authorization | x-clamo-session | x-workos-* |
+|-----------------|---------------|-----------------|------------|
+| Cliente → Kong | ✅ Requerido | ⚪ Legacy (opcional) | ❌ No aplica |
+| Kong → Backend | ❌ Removido | ⚪ Pasado (ignorado) | ✅ Añadidos por Kong |
+| Servicio → Servicio (público) | ❌ Opcional | ❌ No usar | ✅ Propagados |
+| Servicio → Servicio (interno) | ❌ No requerido | ❌ No usar | ⚪ Opcional |
+
+<Note>
+**Regla de oro:** Los backends deben confiar en `x-workos-user-id` y `x-workos-org-id` (que Kong valida), no en `x-clamo-session`.
+</Note>
+
+---
+
+## Generar Session Token para Testing
+
+```typescript
+// scripts/generate-session.ts
+import { encode } from 'base64url';
+
+const session = {
+  userId: 'usr_test123',
+  workosUserId: 'user_workos123',
+  organizationId: 'org_test456',
+  companyId: 'cmp_test789',
+  email: 'test@example.com',
+  role: 'admin',
+};
+
+console.log(encode(JSON.stringify(session)));
+```
+
+Ejecutar:
+
+```bash
+npx ts-node scripts/generate-session.ts
+# Output: eyJ1c2VySWQiOiJ1c3JfdGVzdDEyMyIsIndvcmtvc1VzZXJJZCI6InVzZXJfd29ya29zMTIzIiwib3JnYW5pemF0aW9uSWQiOiJvcmdfdGVzdDQ1NiIsImNvbXBhbnlJZCI6ImNtcF90ZXN0Nzg5IiwiZW1haWwiOiJ0ZXN0QGV4YW1wbGUuY29tIiwicm9sZSI6ImFkbWluIn0
+```
