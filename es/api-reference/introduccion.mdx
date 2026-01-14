@@ -1,6 +1,6 @@
 ---
 title: Introducción a la API
-description: Convenciones, versionado y estructura de las APIs de Clamo
+description: Convenciones, versionado, endpoints públicos e internos de las APIs de Clamo
 ---
 
 # Introducción a la API
@@ -25,6 +25,31 @@ https://api.clamo.dev/v1/cases
 
 Actualmente solo existe la versión `v1`. Cuando se introduzcan cambios breaking, se creará una nueva versión manteniendo compatibilidad con la anterior.
 
+## Tipos de Endpoints
+
+Clamo expone dos tipos de endpoints:
+
+### Endpoints Públicos (`/v1/...`)
+
+Endpoints para consumo por clientes externos (web app, mobile, integraciones):
+
+- Requieren autenticación WorkOS
+- Pasan por Kong API Gateway en producción
+- Rate limiting aplicado
+
+### Endpoints Internos (`/internal/v1/...`)
+
+<Warning>
+**Internal Only** - Estos endpoints son para comunicación servicio-a-servicio dentro de la red interna de Clamo. No están expuestos públicamente y no deben ser llamados desde clientes externos.
+</Warning>
+
+Endpoints para comunicación entre microservicios:
+
+- NO requieren autenticación WorkOS
+- Solo accesibles desde la red interna (Tailscale/VPC)
+- Sin rate limiting
+- Usados por scripts de migración, workers de ingesta, etc.
+
 ## Formato de Requests
 
 ### Content-Type
@@ -37,13 +62,29 @@ curl -X POST https://api.clamo.dev/v1/cases \
   -d '{"expediente": "00001-2024-0-1234-JR-LA-01"}'
 ```
 
-### Headers Requeridos
+### Headers Requeridos (Endpoints Públicos)
 
 | Header | Descripción | Requerido |
 |--------|-------------|-----------|
 | `Authorization` | Token Bearer de WorkOS | Sí |
-| `x-clamo-session` | Sesión codificada en base64 | Sí |
 | `Content-Type` | `application/json` | Para POST/PATCH |
+
+<Note>
+**Nota sobre `x-clamo-session`:** Este header es **legacy** y se usa principalmente en desarrollo local donde no hay Kong. En producción, los servicios backend confían en los headers `x-workos-*` que Kong inyecta después de validar el JWT.
+</Note>
+
+### Headers de Kong (Producción)
+
+En producción, Kong API Gateway valida el JWT de WorkOS y añade headers upstream:
+
+| Header | Descripción |
+|--------|-------------|
+| `x-workos-user-id` | ID del usuario autenticado (extraído del JWT) |
+| `x-workos-org-id` | ID de la organización WorkOS |
+| `x-workos-role` | Rol del usuario en la organización |
+| `x-workos-permissions` | Permisos del usuario |
+
+Los servicios backend confían en estos headers ya que Kong los valida.
 
 ## Formato de Responses
 
@@ -181,6 +222,59 @@ X-RateLimit-Reset: 1704200000
 | 429 | Too Many Requests - Rate limit excedido |
 | 500 | Internal Server Error - Error del servidor |
 
+## Referencia de Endpoints Internos
+
+<Note>
+Los siguientes endpoints son **Internal Only** y solo deben ser usados por servicios internos de Clamo.
+</Note>
+
+### clamo-tenant - Endpoints Internos
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `GET` | `/internal/v1/companies/by-org/{organizationId}` | Obtener empresa por WorkOS org ID |
+| `GET` | `/internal/v1/companies/{companyId}/database-connection` | Obtener connection string del tenant |
+
+**Ejemplo: Obtener connection string**
+
+```bash
+# Desde un servicio interno (sin auth)
+curl http://tenant.internal:4001/internal/v1/companies/cmp_abc123/database-connection
+```
+
+Respuesta:
+
+```json
+{
+  "connectionString": "postgresql://user:pass@host:5432/tenant_db?sslmode=require"
+}
+```
+
+### clamo-cases - Endpoints Internos
+
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `POST` | `/internal/v1/companies/:companyId/cases` | Crear caso (ingesta) |
+| `PUT` | `/internal/v1/companies/:companyId/cases/:id` | Actualizar caso (ingesta) |
+| `POST` | `/internal/v1/companies/:companyId/cases/:caseId/movements/upsert` | Upsert movimiento |
+| `POST` | `/internal/v1/companies/:companyId/cases/:caseId/documents` | Subir documento |
+| `GET` | `/internal/v1/companies/:companyId/cases/:caseId/documents` | Listar documentos |
+| `DELETE` | `/internal/v1/companies/:companyId/cases/:caseId/documents/:id` | Eliminar documento |
+| `POST` | `/internal/v1/companies/:companyId/ingest-runs` | Crear CaseIngestRun |
+| `GET` | `/internal/v1/companies/:companyId/ingest-runs/:runId` | Obtener estado de ingesta |
+
+**Ejemplo: Crear CaseIngestRun**
+
+```bash
+curl -X POST http://cases.internal:4000/internal/v1/companies/cmp_abc123/ingest-runs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "expediente": "00001-2024-0-1234-JR-LA-01",
+    "caseId": "case_xyz789",
+    "source": "CEJ_CONNECTOR"
+  }'
+```
+
 ## SDKs Disponibles
 
 <CardGroup cols={2}>
@@ -196,6 +290,33 @@ X-RateLimit-Reset: 1704200000
   </Card>
 </CardGroup>
 
+### SDKs Internos (Servicio-a-Servicio)
+
+Para comunicación entre servicios:
+
+```bash
+# TypeScript
+pnpm add @getclamo/tenant-sdk
+pnpm add @getclamo/cases-sdk
+
+# Python
+pip install getclamo-tenant
+pip install getclamo-cases
+```
+
+**Ejemplo con tenant-sdk:**
+
+```typescript
+import { TenantClient } from "@getclamo/tenant-sdk";
+
+const tenant = new TenantClient({
+  baseUrl: process.env.TENANT_SERVICE_URL,
+});
+
+// Endpoint interno - sin auth
+const { connectionString } = await tenant.internal.getDatabaseConnection(companyId);
+```
+
 ## Ejemplo Completo
 
 ```javascript
@@ -203,7 +324,7 @@ const response = await fetch('https://api.clamo.dev/v1/cases', {
   method: 'GET',
   headers: {
     'Authorization': `Bearer ${accessToken}`,
-    'x-clamo-session': sessionToken,
+    'Content-Type': 'application/json',
   },
 });
 
@@ -227,16 +348,15 @@ cases.forEach(caso => {
   <Card
     title="Autenticación"
     icon="key"
-    href="/api-reference/autenticacion"
+    href="/es/api-reference/autenticacion"
   >
     Aprende a autenticarte con las APIs.
   </Card>
   <Card
     title="Errores"
     icon="triangle-exclamation"
-    href="/api-reference/errores"
+    href="/es/api-reference/errores"
   >
     Manejo de errores y códigos de respuesta.
   </Card>
 </CardGroup>
-
