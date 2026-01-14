@@ -1,40 +1,290 @@
 ---
 title: Variables de Entorno
-description: Variables de entorno comunes para los servicios de Clamo
+description: Referencia completa de variables de entorno para los servicios de Clamo
 ---
 
-## Variables de Entorno
+## Variables de Entorno por Servicio
 
-### Base de Datos
+### Variables Comunes
 
 ```bash
-# Control database (Supabase)
+# Entorno
+NODE_ENV=development|staging|production  # Default: development
+LOG_LEVEL=debug|info|warn|error          # Default: info
+```
+
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `NODE_ENV` | `development` | Entorno de ejecución |
+| `LOG_LEVEL` | `info` | Nivel de logging |
+| `PORT` | Varía por servicio | Puerto del servidor (ver cada servicio) |
+
+<Note>
+**Tip:** Si una variable tiene valor por defecto, puedes omitirla de tu `.env` local para mantenerlo limpio. Solo configura las variables que necesitas cambiar.
+</Note>
+
+---
+
+### clamo-web-app (Next.js)
+
+Puerto por defecto: **3001**
+
+```bash
+# WorkOS (Autenticación)
+WORKOS_API_KEY=sk_live_...
+WORKOS_CLIENT_ID=client_...
+WORKOS_REDIRECT_URI=http://localhost:3001/callback
+WORKOS_COOKIE_PASSWORD=<32+ chars random string>
+
+# Backend APIs
+CASES_SERVICE_URL=http://localhost:4000
+TENANT_SERVICE_URL=http://localhost:4001
+DISCOVERY_SERVICE_URL=http://localhost:8001
+
+# Luna/ask-clamo (LangGraph)
+ASK_CLAMO_LANGGRAPH_URL=http://localhost:8000
+ASK_CLAMO_LANGGRAPH_API_KEY=...  # Opcional en local
+LUNA_ASSISTANT_ID=luna
+
+# Analytics
+NEXT_PUBLIC_POSTHOG_KEY=phc_...
+NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
+TINYBIRD_TOKEN=p.eyJ...
+```
+
+---
+
+### clamo-tenant
+
+```bash
+# Base de datos de control (Supabase)
 CONTROL_DATABASE_URL=postgresql://user:pass@host:5432/control?sslmode=require
 
-# Tenant database template (Neon)
-# Las conexiones de tenant se resuelven dinámicamente desde Vault
+# WorkOS
+WORKOS_API_KEY=sk_...
+WORKOS_CLIENT_ID=client_...
+
+# Neon (Provisioning de tenant DBs)
+NEON_API_KEY=...
+NEON_PROJECT_ID=...
+
+# Supabase (Vault para secretos)
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...
+
+# Kafka (opcional, para eventos)
+KAFKA_BROKERS=localhost:9092
+
+# Server
+PORT=4001
 ```
+
+---
+
+### clamo-cases
+
+```bash
+# Base de datos de control (para resolver tenant)
+CONTROL_DATABASE_URL=postgresql://...
+
+# Servicio de tenant (para obtener connection strings)
+TENANT_SERVICE_URL=http://localhost:4001
+
+# API Key interna (para SDK y autenticación interna)
+CLAMO_API_KEY=...
+
+# Redis (cache de taxonomía)
+REDIS_URL=redis://localhost:6379
+
+# Ably (notificaciones real-time)
+ABLY_API_KEY=...
+
+# S3 (documentos)
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+S3_BUCKET=clamo-documents
+
+# Kafka
+KAFKA_BROKERS=localhost:9092
+
+# Server
+PORT=4000
+```
+
+<Note>
+`CLAMO_API_KEY` es usada para autenticación interna y generación del cliente SDK. Sin ella, los scripts de generación o tests de integración pueden fallar.
+</Note>
+
+---
+
+### luna (Repo: luna, Servicio desplegado: ask-clamo)
+
+Asistente IA unificado con LangGraph Platform. El repo se llama `luna` y el servicio desplegado es `ask-clamo`.
+
+Puerto por defecto: **8000** (LangGraph dev server)
+
+```bash
+# LLM
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...  # Opcional, si usas OpenAI
+
+# Backend APIs (defaults en settings.py)
+CASES_SERVICE_URL=http://localhost:4000      # Default
+TENANT_SERVICE_URL=http://localhost:8001     # Default (Kong en local)
+CLAMO_TOOLS_URL=http://localhost:8080        # Olive REST API (REQUERIDO)
+
+# Tinybird MCP (Analytics)
+TINYBIRD_TOKEN=p.eyJ...
+TINYBIRD_API_URL=https://api.tinybird.co
+
+# LangSmith (Tracing)
+LANGCHAIN_API_KEY=ls__...
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_PROJECT=clamo-dev
+
+# Gateway Mode (producción)
+API_GATEWAY=true
+API_GATEWAY_URL=https://api.prd.clamo.services
+```
+
+<Note>
+`CLAMO_TOOLS_URL` es **requerido** para que Luna pueda delegar herramientas a clamo-tools vía Olive. Sin esta variable, las herramientas de casos no funcionarán.
+</Note>
+
+---
+
+### clamo-tools (Olive)
+
+Servidor de herramientas remotas usando el framework Olive.
+
+Puerto por defecto: **8080**
+
+```bash
+# Backend APIs (defaults en config.py)
+CASES_SERVICE_URL=http://localhost:4000      # Default
+TENANT_SERVICE_URL=http://localhost:8001     # Default (Kong en local)
+
+# Server
+HOST=0.0.0.0
+PORT=8080
+ENVIRONMENT=local
+LOG_LEVEL=INFO
+
+# API Timeout
+API_TIMEOUT=30.0
+
+# Internal Service Auth (opcional)
+INTERNAL_SERVICE_KEY=...
+```
+
+---
+
+### clamo-cej-connector
+
+```bash
+# Temporal
+TEMPORAL_ADDRESS=localhost:7233
+TEMPORAL_NAMESPACE=clamo-cej
+
+# LLM (para normalización)
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Steel.dev (Browser automation)
+STEEL_API_KEY=...
+
+# LlamaParse (PDF extraction)
+LLAMA_CLOUD_API_KEY=...
+
+# S3/MinIO (Envelopes)
+S3_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY=...
+S3_SECRET_KEY=...
+S3_BUCKET=clamo-envelopes
+
+# Cache
+CACHE_ENABLED=true
+CACHE_BACKEND=memory|redis
+CACHE_TTL_SECONDS=1200
+REDIS_URL=redis://localhost:6379
+
+# Observability
+LOGFIRE_TOKEN=...
+LANGCHAIN_API_KEY=ls__...
+```
+
+---
+
+### clamo-ingest-go
+
+```bash
+# Kafka
+KAFKA_BROKERS=localhost:9092
+KAFKA_CONSUMER_GROUP=clamo-ingest
+KAFKA_TOPIC=cases-ingest
+
+# S3/MinIO
+S3_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY=...
+S3_SECRET_KEY=...
+S3_BUCKET=clamo-envelopes
+
+# Tenant Service
+TENANT_SERVICE_URL=http://localhost:4001
+
+# Redis (Taxonomy cache)
+REDIS_URL=redis://localhost:6379
+
+# Performance
+DB_MAX_CONNECTIONS=20
+BATCH_SIZE=100
+```
+
+---
+
+### clamo-database (Scripts)
+
+```bash
+# Control database
+CONTROL_DATABASE_URL=postgresql://...
+
+# Para producción
+PRD_CONTROL_DATABASE_URL=postgresql://...
+
+# Tenant service (para --via api)
+TENANT_SERVICE_URL=https://tenant.prd.clamo.services
+TENANT_SERVICE_URL_STG=https://tenant.stg.clamo.dev
+TENANT_SERVICE_URL_PRD=https://tenant.prd.clamo.services
+
+# Branch template (para dry-run)
+PRD_TENANT_BRANCH_TEMPLATE_ID=br-xxx-yyy
+PRD_TENANT_DATABASE_URL=postgresql://...
+```
+
+---
+
+## Servicios Externos
 
 ### WorkOS (Autenticación)
 
 ```bash
 WORKOS_API_KEY=sk_live_...
 WORKOS_CLIENT_ID=client_...
-WORKOS_REDIRECT_URI=http://localhost:3000/callback
+WORKOS_REDIRECT_URI=http://localhost:3001/callback
 ```
 
-### Neon (Base de Datos)
-
-```bash
-NEON_API_KEY=...
-NEON_PROJECT_ID=...
-```
-
-### Supabase (Vault)
+### Supabase (Control DB + Vault)
 
 ```bash
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...
+```
+
+### Neon (Tenant DBs)
+
+```bash
+NEON_API_KEY=...
+NEON_PROJECT_ID=...
 ```
 
 ### Tinybird (Analytics)
@@ -44,7 +294,7 @@ TINYBIRD_TOKEN=p.eyJ...
 TINYBIRD_API_URL=https://api.tinybird.co
 ```
 
-### Anthropic (IA)
+### Anthropic (LLM)
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
@@ -56,16 +306,54 @@ ANTHROPIC_API_KEY=sk-ant-...
 SENDGRID_API_KEY=SG.xxx
 ```
 
-### Kafka (Mensajería)
+### Ably (Real-time)
+
+```bash
+ABLY_API_KEY=...
+```
+
+### Kafka
 
 ```bash
 KAFKA_BROKERS=localhost:9092
 ```
 
-### Temporal (Orquestación)
+### Temporal
 
 ```bash
 TEMPORAL_ADDRESS=localhost:7233
 TEMPORAL_NAMESPACE=clamo
 ```
 
+### Steel.dev (Browser Automation)
+
+```bash
+STEEL_API_KEY=...
+```
+
+### LangSmith (LLM Tracing)
+
+```bash
+LANGCHAIN_API_KEY=ls__...
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_PROJECT=clamo-dev
+```
+
+---
+
+## Configuración Local
+
+Para desarrollo local, copia el archivo `.env.example` a `.env` en cada servicio:
+
+```bash
+cd clamo-tenant
+cp .env.example .env
+# Editar .env con tus valores
+```
+
+O usa `clamo-setup` para configurar todo automáticamente:
+
+```bash
+cd clamo-setup
+python -m clamo_setup init
+```
