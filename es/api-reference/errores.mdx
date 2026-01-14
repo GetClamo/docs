@@ -184,7 +184,6 @@ async function fetchCases() {
   const response = await fetch('https://api.clamo.dev/v1/cases', {
     headers: {
       'Authorization': `Bearer ${token}`,
-      'x-clamo-session': sessionToken,
     },
   });
 
@@ -225,12 +224,11 @@ async function fetchCases() {
 import httpx
 import time
 
-def fetch_cases(token, session_token):
+def fetch_cases(token):
     response = httpx.get(
         "https://api.clamo.dev/v1/cases",
         headers={
             "Authorization": f"Bearer {token}",
-            "x-clamo-session": session_token,
         }
     )
     
@@ -239,12 +237,12 @@ def fetch_cases(token, session_token):
         
         if error["code"] == "TOKEN_EXPIRED":
             new_token = refresh_token()
-            return fetch_cases(new_token, session_token)
+            return fetch_cases(new_token)
             
         elif error["code"] == "RATE_LIMIT_EXCEEDED":
             retry_after = error["details"]["retryAfter"]
             time.sleep(retry_after)
-            return fetch_cases(token, session_token)
+            return fetch_cases(token)
             
         elif error["code"] == "VALIDATION_ERROR":
             for err in error["details"]["errors"]:
@@ -317,16 +315,15 @@ Incluye el `X-Request-Id` al contactar soporte para facilitar el diagnóstico.
   <Card
     title="Inicio Rápido"
     icon="rocket"
-    href="/inicio/inicio-rapido"
+    href="/es/inicio/inicio-rapido"
   >
     Comienza a integrar con las APIs.
   </Card>
   <Card
     title="Guía de Errores"
     icon="book"
-    href="/guias/errores"
+    href="/es/guias/errores"
   >
     Guía completa de manejo de errores.
   </Card>
 </CardGroup>
-

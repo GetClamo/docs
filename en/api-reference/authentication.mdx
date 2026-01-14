@@ -30,12 +30,28 @@ sequenceDiagram
 
 ## Required Tokens
 
-To authenticate with Clamo APIs you need two tokens:
+To authenticate with Clamo APIs you need:
 
 | Token | Header | Description |
 |-------|--------|-------------|
 | Access Token | `Authorization: Bearer <token>` | WorkOS JWT token |
-| Session Token | `x-clamo-session: <token>` | Clamo session in base64 |
+
+<Note>
+**Note about `x-clamo-session`:** This header is **legacy** and only used in local development without Kong. In production, backend services trust the `x-workos-*` headers that Kong injects after validating the JWT.
+</Note>
+
+### Kong Headers (Production)
+
+In production, Kong API Gateway validates the WorkOS JWT and adds upstream headers:
+
+| Header | Description |
+|--------|-------------|
+| `x-workos-user-id` | Authenticated user ID (extracted from JWT) |
+| `x-workos-org-id` | WorkOS organization ID |
+| `x-workos-role` | User's role in the organization |
+| `x-workos-permissions` | User's permissions |
+
+Backend services trust these headers since Kong validates them.
 
 ## Obtain Access Token
 
@@ -71,9 +87,13 @@ const { accessToken, refreshToken, user } = await workos.userManagement.authenti
 });
 ```
 
-## Create Session Token
+## Create Session Token (Legacy - Local Dev Only)
 
-The session token is a JSON object encoded in base64 containing user information:
+<Warning>
+**Legacy:** The session token is only needed for local development without Kong. In production, Kong handles authentication and injects `x-workos-*` headers automatically.
+</Warning>
+
+For local development, the session token is a JSON object encoded in base64 containing user information:
 
 ```typescript
 interface ClamoSession {
@@ -132,12 +152,12 @@ const response = await fetch('https://api.clamo.dev/v1/cases', {
 
 ```javascript JavaScript
 const accessToken = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...';
-const sessionToken = 'eyJ1c2VySWQiOiJ1c3JfYWJjMTIzIiwiY29tcGFueUlkIjoiY21wX3h5ejc4OSJ9';
 
+// In production, just send the Authorization header
+// Kong will validate the JWT and inject x-workos-* headers
 const response = await fetch('https://api.clamo.dev/v1/cases', {
   headers: {
     'Authorization': `Bearer ${accessToken}`,
-    'x-clamo-session': sessionToken,
   },
 });
 
@@ -146,34 +166,21 @@ const data = await response.json();
 
 ```python Python
 import httpx
-import base64
-import json
 
 access_token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
 
-session_data = {
-    "userId": "usr_abc123",
-    "companyId": "cmp_xyz789",
-    "email": "user@empresa.com",
-    "role": "admin"
-}
-session_token = base64.urlsafe_b64encode(
-    json.dumps(session_data).encode()
-).decode()
-
+# In production, just send the Authorization header
 response = httpx.get(
     "https://api.clamo.dev/v1/cases",
     headers={
         "Authorization": f"Bearer {access_token}",
-        "x-clamo-session": session_token,
     }
 )
 ```
 
 ```bash cURL
 curl -X GET https://api.clamo.dev/v1/cases \
-  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
-  -H "x-clamo-session: eyJ1c2VySWQiOiJ1c3JfYWJjMTIzIn0"
+  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
 </CodeGroup>
@@ -202,16 +209,39 @@ Clamo defines two main roles:
 | `admin` | Company administrator | Full CRUD, invite users, configuration |
 | `member` | Member | Read cases, comments |
 
-### Check Permissions
+### How Roles Work
+
+In production, roles are managed through WorkOS Organizations:
+
+1. **WorkOS Organization Membership**: Users are assigned roles when invited to an organization
+2. **Kong JWT Validation**: Kong extracts the role from the JWT claims
+3. **Header Injection**: Kong injects `x-workos-role` header to backend services
+4. **Backend Authorization**: Services check the role header for authorization
 
 ```typescript
-// Role comes in the session token
-const session = JSON.parse(
-  Buffer.from(sessionToken, 'base64url').toString()
-);
+// Backend middleware example (clamo-cases)
+function requireAdmin(c: Context, next: Next) {
+  const role = c.req.header('x-workos-role');
+  
+  if (role !== 'admin') {
+    throw new ForbiddenError('Administrator permissions required');
+  }
+  
+  return next();
+}
+```
 
-if (session.role !== 'admin') {
-  throw new Error('Administrator permissions required');
+### Check Permissions (Frontend)
+
+```typescript
+// Get role from WorkOS session
+import { getSession } from '@workos-inc/authkit-nextjs';
+
+const session = await getSession();
+const role = session?.role || 'member';
+
+if (role !== 'admin') {
+  // Redirect or show error
 }
 ```
 
