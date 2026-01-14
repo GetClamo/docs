@@ -1,11 +1,11 @@
 ---
 title: clamo-cases
-description: Servicio de gestión de expedientes judiciales, movimientos e hitos procesales
+description: Servicio de gestión de expedientes judiciales con patrón RRS y Trusted Sources
 ---
 
 # clamo-cases
 
-Servicio principal para la gestión de casos legales, movimientos procesales, hitos y documentos asociados.
+Servicio principal para la gestión de casos legales, movimientos procesales, decisiones y documentos asociados. Implementa el patrón **RRS (Repository-Route-Service)** y el modelo de **Trusted Sources** para datos multi-origen.
 
 ## Información General
 
@@ -16,49 +16,143 @@ Servicio principal para la gestión de casos legales, movimientos procesales, hi
 | **Framework** | Hono |
 | **Puerto** | 4000 |
 | **Base de Datos** | Neon PostgreSQL (multi-tenant) |
+| **ORM** | Prisma (`@getclamo/database`) |
 
-## Responsabilidades
+## Arquitectura RRS
 
-- CRUD de expedientes judiciales
-- Gestión de movimientos procesales
-- Tracking de hitos y etapas del proceso
-- Almacenamiento de documentos y snapshots
-- Notificaciones en tiempo real via Ably
-- Integración con asistentes IA
-
-## Arquitectura
+El servicio sigue estrictamente el patrón **Repository-Route-Service**:
 
 ```mermaid
 flowchart TB
-    subgraph API [API Layer]
-        Routes[Routes]
-        Controllers[Controllers]
-        RLS[RLS Middleware]
+    subgraph Routes [Capa Route]
+        CasesRoute[cases.ts]
+        MovementsRoute[movements.ts]
+        DecisionsRoute[decisions.ts]
+        Zod[Validación Zod]
     end
     
-    subgraph Domain [Domain Layer]
-        CaseService[CaseService]
-        MovementService[MovementService]
-        MilestoneService[MilestoneService]
+    subgraph Services [Capa Service]
+        CaseService[case.service.ts]
+        MovementService[movement.service.ts]
+        DecisionService[decision.service.ts]
+        TrustedSource[Lógica Trusted Source]
     end
     
-    subgraph Infrastructure [Infrastructure]
-        TenantDB[Tenant Prisma Client]
-        ControlDB[Control Prisma Client]
-        Ably[Ably Client]
-        Redis[Redis Cache]
-        S3[AWS S3]
+    subgraph Repositories [Capa Repository]
+        CaseRepo[case.repository.ts]
+        MovementRepo[movement.repository.ts]
+        DecisionRepo[decision.repository.ts]
+        Prisma[Prisma Client]
     end
     
-    Routes --> Controllers
-    Controllers --> RLS
-    Controllers --> CaseService
-    CaseService --> MovementService
-    CaseService --> MilestoneService
-    CaseService --> TenantDB
-    CaseService --> Ably
-    MovementService --> TenantDB
-    MilestoneService --> TenantDB
+    subgraph Middleware [Middleware]
+        Auth[auth.ts]
+        Tenant[tenant.ts]
+    end
+    
+    CasesRoute --> Zod
+    Zod --> CaseService
+    CaseService --> TrustedSource
+    CaseService --> CaseRepo
+    CaseRepo --> Prisma
+    
+    Auth --> Tenant
+    Tenant --> CasesRoute
+```
+
+## Estructura de Directorios
+
+```
+clamo-cases/src/
+├── routes/              # Capa Route - Solo validación Zod y respuesta JSON
+│   ├── cases.ts
+│   ├── movements.ts
+│   ├── decisions.ts
+│   ├── parties.ts
+│   ├── ingest-runs.ts
+│   └── stages.ts
+├── services/            # Capa Service - Lógica de negocio y Trusted Source
+│   ├── case.service.ts
+│   ├── movement.service.ts
+│   ├── decision.service.ts
+│   └── ingest-run.service.ts
+├── repositories/        # Capa Repository - Solo queries Prisma
+│   ├── case.repository.ts
+│   ├── movement.repository.ts
+│   ├── decision.repository.ts
+│   └── ingest-run.repository.ts
+├── middleware/          # Auth y resolución de tenant
+│   ├── auth.ts          # Parsea x-workos-* headers
+│   └── tenant.ts        # Resuelve conexión de tenant
+├── mappers/             # Transformación de datos
+├── schemas/             # Schemas Zod
+└── clients/sdk/         # SDK de Tenant para llamadas internas
+```
+
+## Autenticación
+
+El servicio usa headers `x-workos-*` inyectados por Kong después de validar el JWT:
+
+```typescript
+// middleware/auth.ts
+const userId = headers.get("x-workos-user-id");
+const orgId = headers.get("x-workos-org-id");
+const role = headers.get("x-workos-role") ?? "member";
+const permissionsHeader = headers.get("x-workos-permissions");
+```
+
+<Note>
+**En desarrollo local:** Sin Kong, debes pasar estos headers manualmente en tus requests.
+</Note>
+
+## Modelo de Datos con Trusted Sources
+
+Los campos críticos usan el patrón **SourcedValue** (JSONB) para rastrear el origen de los datos:
+
+```typescript
+// Estructura SourcedValue en la base de datos
+interface SourcedValue<T> {
+  cej: T | null;      // Valor del scraper CEJ
+  ai: T | null;       // Valor normalizado por IA
+  manual: T | null;   // Valor corregido por humano
+  updatedAt?: {
+    cej?: string;
+    ai?: string;
+    manual?: string;
+  };
+}
+
+// Campos que usan SourcedValue en Case
+interface Case {
+  id: string;
+  caseNumber: string;
+  companyId: string;
+  filingDate: Date | null;
+  
+  // SourcedValue fields (JSONB)
+  subjectMatter: SourcedValue<string[]>;  // Materias
+  processType: SourcedValue<string>;      // Tipo de proceso
+  stage: SourcedValue<string>;            // Etapa
+  abstract: SourcedValue<string>;         // Sumilla
+  observation: SourcedValue<string>;
+  conclusionReason: SourcedValue<string>;
+  
+  // CEJ-sourced fields (string directo)
+  cejJudicialDistrict: string | null;
+  court: string | null;
+  judge: string | null;
+  // ...
+}
+```
+
+### Resolución de Valor
+
+```typescript
+// services/case.service.ts
+function resolveValue<T>(sourced: SourcedValue<T>): T | null {
+  // Prioridad: manual > ai > cej
+  return sourced.manual ?? sourced.ai ?? sourced.cej ?? null;
+}
 ```
 
 ## Endpoints Principales
@@ -69,260 +163,113 @@ flowchart TB
 |--------|----------|-------------|
 | GET | `/v1/cases` | Listar casos con filtros |
 | GET | `/v1/cases/:id` | Obtener detalle de caso |
-| POST | `/v1/cases` | Crear caso |
 | PATCH | `/v1/cases/:id` | Actualizar caso |
-| DELETE | `/v1/cases/:id` | Eliminar caso |
 
 ### Movimientos
 
 | Método | Endpoint | Descripción |
 |--------|----------|-------------|
-| GET | `/v1/cases/:id/movements` | Listar movimientos |
-| GET | `/v1/cases/:id/movements/:movementId` | Obtener movimiento |
+| GET | `/v1/cases/:caseId/movements` | Listar movimientos |
+| GET | `/v1/cases/:caseId/movements/:id` | Obtener movimiento |
 
-### Hitos y Progreso
-
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/v1/cases/:id/milestones` | Hitos procesales |
-| GET | `/v1/cases/:id/progress` | Progreso por etapas |
-
-### Taxonomía
+### Decisiones
 
 | Método | Endpoint | Descripción |
 |--------|----------|-------------|
-| GET | `/v1/taxonomy/stages` | Etapas procesales |
-| GET | `/v1/taxonomy/substages` | Sub-etapas |
-| GET | `/v1/taxonomy/milestones` | Tipos de hitos |
+| GET | `/v1/cases/:caseId/decisions` | Listar decisiones |
+| GET | `/v1/decisions/:id` | Obtener decisión |
 
-## Modelo de Datos
+### Ingest Runs
 
-### Case
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/v1/cases/:caseId/ingest-runs` | Listar runs de ingesta |
+| GET | `/v1/ingest-runs/:id` | Obtener estado de run |
 
-```typescript
-interface Case {
-  id: string;
-  expediente: string;
-  caseNumber: string;
-  plaintiff: string;          // Demandante
-  defendant: string;          // Demandado
-  subjectMatter: string;      // Materia
-  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-  claimAmount: number | null; // Monto demandado
-  district: string;
-  court: string;
-  currentJudge: string | null;
-  processType: string;
-  filingDate: Date;
-  status: CaseStatus;
-  stageCode: string;
-  substageCode: string;
-  companyId: string;
-  monitoredEntityId: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
+### Endpoints Internos
 
-type CaseStatus = 
-  | 'EN_TRAMITE'
-  | 'EN_EJECUCION'
-  | 'ARCHIVADO'
-  | 'CONCLUIDO';
-```
+<Warning>
+**Solo para servicio-a-servicio.** No expuestos públicamente.
+</Warning>
 
-### Movement
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/internal/v1/companies/:companyId/cases` | Listar casos (interno) |
+| POST | `/internal/v1/companies/:companyId/cases` | Crear caso (ingesta) |
+| PATCH | `/internal/v1/companies/:companyId/cases/:id` | Actualizar caso (ingesta) |
+
+## Ejemplo de Flujo RRS
+
+### Route (Solo validación)
 
 ```typescript
-interface Movement {
-  id: string;
-  caseId: string;
-  date: Date;
-  description: string;
-  resolution: string | null;
-  actor: string | null;
-  classification: MovementClassification;
-  isNotification: boolean;
-  documentUrl: string | null;
-  summary: string | null;
-  createdAt: Date;
-}
+// routes/cases.ts
+app.patch(
+  "/:id",
+  zValidator("json", UpdateCaseSchema),
+  async (c) => {
+    const id = c.req.param("id");
+    const data = c.req.valid("json");
+    const tenantDb = c.get("tenantDb");
 
-type MovementClassification =
-  | 'RESOLUCION'
-  | 'ESCRITO'
-  | 'NOTIFICACION'
-  | 'AUDIENCIA'
-  | 'OTRO';
-```
+    // Delegar TODO al servicio
+    const result = await caseService.updateCase(tenantDb, id, data);
 
-### CaseProgress
-
-```typescript
-interface CaseProgress {
-  id: string;
-  caseId: string;
-  stageCode: string;
-  substageCode: string;
-  startDate: Date;
-  endDate: Date | null;
-  durationDays: number | null;
-  isCurrent: boolean;
-}
-```
-
-### CaseMilestone
-
-```typescript
-interface CaseMilestone {
-  id: string;
-  caseId: string;
-  milestoneCode: string;
-  achievedAt: Date;
-  movementId: string | null;
-  metadata: Record<string, unknown>;
-}
-```
-
-## Filtros Disponibles
-
-### GET /v1/cases
-
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `status` | string | Filtrar por estado |
-| `riskLevel` | string | Filtrar por nivel de riesgo |
-| `stageCode` | string | Filtrar por etapa |
-| `district` | string | Filtrar por distrito judicial |
-| `search` | string | Búsqueda por expediente o partes |
-| `page` | number | Página (default: 1) |
-| `limit` | number | Resultados por página (default: 20) |
-| `sortBy` | string | Campo para ordenar |
-| `sortOrder` | 'asc' \| 'desc' | Dirección del orden |
-
-## Ejemplos de Uso
-
-### Listar Casos
-
-```bash
-curl -X GET "http://localhost:4000/v1/cases?status=EN_TRAMITE&riskLevel=HIGH" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "x-clamo-session: $SESSION"
-```
-
-Respuesta:
-
-```json
-{
-  "data": [
-    {
-      "id": "case_abc123",
-      "expediente": "00001-2024-0-1234-JR-LA-01",
-      "plaintiff": "Juan Pérez García",
-      "defendant": "Empresa S.A.C.",
-      "subjectMatter": "Despido arbitrario",
-      "riskLevel": "HIGH",
-      "claimAmount": 50000,
-      "status": "EN_TRAMITE",
-      "stageCode": "CONOCIMIENTO",
-      "substageCode": "SANEAMIENTO"
-    }
-  ],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 150,
-    "totalPages": 8
+    return c.json(result);
   }
+);
+```
+
+### Service (Lógica de negocio)
+
+```typescript
+// services/case.service.ts
+async updateCase(
+  tenantDb: PrismaClient,
+  id: string,
+  data: UpdateCaseInput
+): Promise<Case> {
+  const existing = await this.caseRepo.findById(tenantDb, id);
+
+  if (!existing) {
+    throw new NotFoundError("Case not found");
+  }
+
+  // Lógica de Trusted Source
+  const updateData: Partial<CaseUpdateData> = {};
+
+  if (data.subjectMatter !== undefined) {
+    const current = existing.subjectMatter as SourcedValue;
+    
+    // Solo actualizar si es corrección manual
+    updateData.subjectMatter = {
+      ...current,
+      manual: data.subjectMatter,
+      updatedAt: {
+        ...current.updatedAt,
+        manual: new Date().toISOString(),
+      },
+    };
+  }
+
+  return this.caseRepo.update(tenantDb, id, updateData);
 }
 ```
 
-### Obtener Detalle de Caso
+### Repository (Solo Prisma)
 
-```bash
-curl -X GET "http://localhost:4000/v1/cases/case_abc123" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "x-clamo-session: $SESSION"
-```
-
-Respuesta:
-
-```json
-{
-  "id": "case_abc123",
-  "expediente": "00001-2024-0-1234-JR-LA-01",
-  "plaintiff": "Juan Pérez García",
-  "defendant": "Empresa S.A.C.",
-  "subjectMatter": "Despido arbitrario",
-  "riskLevel": "HIGH",
-  "claimAmount": 50000,
-  "district": "LIMA",
-  "court": "1° Juzgado Laboral",
-  "currentJudge": "Dr. María García",
-  "filingDate": "2024-01-15T00:00:00Z",
-  "status": "EN_TRAMITE",
-  "movements": [
-    {
-      "id": "mov_001",
-      "date": "2024-06-15T00:00:00Z",
-      "description": "RESOLUCIÓN N° 15: Se tiene por contestada la demanda",
-      "classification": "RESOLUCION"
-    }
-  ],
-  "milestones": [
-    {
-      "milestoneCode": "DEMANDA_ADMITIDA",
-      "achievedAt": "2024-01-20T00:00:00Z"
-    }
-  ],
-  "progress": [
-    {
-      "stageCode": "CONOCIMIENTO",
-      "substageCode": "CALIFICACION",
-      "startDate": "2024-01-15T00:00:00Z",
-      "endDate": "2024-01-20T00:00:00Z",
-      "isCurrent": false
-    }
-  ]
+```typescript
+// repositories/case.repository.ts
+async update(
+  db: PrismaClient,
+  id: string,
+  data: Partial<CaseUpdateData>
+): Promise<Case> {
+  return db.case.update({
+    where: { id },
+    data,
+  });
 }
-```
-
-### Obtener Movimientos
-
-```bash
-curl -X GET "http://localhost:4000/v1/cases/case_abc123/movements" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "x-clamo-session: $SESSION"
-```
-
-## Row Level Security (RLS)
-
-El servicio implementa RLS para asegurar el aislamiento de datos por tenant:
-
-1. El middleware extrae `companyId` del token de sesión
-2. Se resuelve la conexión a la base de datos del tenant
-3. Todas las queries se ejecutan en el contexto del tenant
-
-```typescript
-// Middleware simplificado
-app.use('*', async (c, next) => {
-  const session = decodeSession(c.req.header('x-clamo-session'));
-  const tenantDb = await getTenantConnection(session.companyId);
-  c.set('tenantDb', tenantDb);
-  await next();
-});
-```
-
-## Notificaciones en Tiempo Real
-
-Clamo usa Ably para notificaciones push cuando hay nuevos movimientos:
-
-```typescript
-// Publicar evento
-await ably.channels.get(`company:${companyId}`).publish('movement:new', {
-  caseId: case.id,
-  expediente: case.expediente,
-  movement: newMovement,
-});
 ```
 
 ## Configuración
@@ -330,19 +277,56 @@ await ably.channels.get(`company:${companyId}`).publish('movement:new', {
 ### Variables de Entorno
 
 ```bash
+# Servidor
+PORT=4000
+
 # Base de datos de control (para resolver tenant)
 CONTROL_DATABASE_URL=postgresql://...
 
-# Redis (cache de taxonomía)
-REDIS_URL=redis://localhost:6379
+# Supabase (para Vault)
+SUPABASE_URL=https://...
+SUPABASE_SERVICE_KEY=...
 
-# Ably (notificaciones)
-ABLY_API_KEY=...
+# Tenant SDK (para llamadas internas)
+TENANT_SERVICE_URL=http://localhost:4001
 
 # S3 (documentos)
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-S3_BUCKET=clamo-documents
+S3_ENDPOINT=http://localhost:9000
+S3_ACCESS_KEY=...
+S3_SECRET_KEY=...
+S3_BUCKET=clamo-attachments
+
+# Observabilidad
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+## SDK
+
+Este servicio publica un SDK de TypeScript:
+
+```bash
+pnpm add @getclamo/cases
+```
+
+```typescript
+import Cases from "@getclamo/cases";
+
+const cases = new Cases({ baseURL: process.env.CASES_SERVICE_URL });
+
+// Listar casos
+const result = await cases.list({
+  status: "EN_TRAMITE",
+  page: 1,
+  limit: 20,
+});
+
+// Obtener caso
+const caseDetail = await cases.get("case_abc123");
+
+// Endpoints internos (servicio-a-servicio)
+const internalCases = await cases.internal
+  .companies(companyId)
+  .cases.list();
 ```
 
 ## Desarrollo Local
@@ -361,45 +345,21 @@ pnpm build
 pnpm test
 ```
 
-## Dependencias Clave
+## Próximos Pasos
 
-| Paquete | Uso |
-|---------|-----|
-| `@getclamo/database` | Prisma clients |
-| `@getclamo/tenant-sdk` | Resolución de tenant |
-| `hono` | Framework HTTP |
-| `ably` | Notificaciones real-time |
-| `ioredis` | Cache |
-| `@aws-sdk/client-s3` | Almacenamiento de documentos |
-
-
-
-## SDK
-
-Este servicio publica un SDK de TypeScript para consumo por otros servicios:
-
-```bash
-pnpm add @getclamo/cases-sdk
-```
-
-```typescript
-import { CasesClient } from "@getclamo/cases-sdk";
-
-const cases = new CasesClient({
-  baseUrl: process.env.CASES_SERVICE_URL,
-});
-
-// Listar casos con filtros
-const result = await cases.list({
-  status: "EN_TRAMITE",
-  riskLevel: "HIGH",
-  page: 1,
-  limit: 20,
-});
-
-// Obtener detalle de caso
-const caseDetail = await cases.get("case_abc123");
-
-// Obtener movimientos del caso
-const movements = await cases.movements("case_abc123");
-```
+<CardGroup cols={2}>
+  <Card
+    title="Patrón RRS"
+    icon="layer-group"
+    href="/es/arquitectura/patron-rrs"
+  >
+    Documentación detallada del patrón.
+  </Card>
+  <Card
+    title="Modelo de Datos"
+    icon="database"
+    href="/es/arquitectura/modelo-datos"
+  >
+    Patrón SourcedValue completo.
+  </Card>
+</CardGroup>

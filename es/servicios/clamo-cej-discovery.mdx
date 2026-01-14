@@ -1,11 +1,11 @@
 ---
 title: clamo-cej-discovery
-description: Servicio de descubrimiento y búsqueda masiva de expedientes en el CEJ
+description: Servicio de búsqueda masiva de expedientes en el CEJ
 ---
 
 # clamo-cej-discovery
 
-Servicio de descubrimiento y búsqueda masiva de expedientes en el CEJ (Centro de Justicia Electrónico). Automatiza la búsqueda de expedientes por correlativos y extrae información detallada para almacenarla en CSV.
+Servicio de descubrimiento y búsqueda masiva de expedientes en el CEJ. Automatiza la búsqueda por correlativos y almacena resultados en CSV para análisis posterior.
 
 ## Información General
 
@@ -15,34 +15,41 @@ Servicio de descubrimiento y búsqueda masiva de expedientes en el CEJ (Centro d
 | **Lenguaje** | Python 3.11 |
 | **Orquestación** | Temporal |
 | **Navegador** | Playwright + Steel.dev |
-| **Almacenamiento** | MinIO/S3 |
-| **Base de datos** | PostgreSQL |
+| **Almacenamiento** | MinIO/S3 (CSV) |
+
+## Diferencia con clamo-cej-connector
+
+| Aspecto | clamo-cej-connector | clamo-cej-discovery |
+|---------|---------------------|---------------------|
+| **Propósito** | Extrae detalles de casos conocidos | Descubre nuevos casos por correlativo |
+| **Entrada** | Expediente específico | Rango de correlativos (1-99999) |
+| **Salida** | Kafka → Base de datos | CSV en MinIO |
+| **Uso** | Monitoreo continuo | Búsqueda inicial masiva |
 
 ## Arquitectura
 
 ```mermaid
 flowchart TB
-    subgraph Scheduler [Programación]
-        Temporal[Temporal Server]
+    subgraph Trigger [Disparadores]
         API[Discovery API]
+        Temporal[Temporal Scheduler]
     end
     
     subgraph Discovery [clamo-cej-discovery]
         Worker[Temporal Worker]
-        Browser[Controlador de Navegador]
-        Parser[Analizador HTML]
-        Storage[Almacenamiento CSV]
+        Browser[Browser Controller]
+        Parser[HTML Parser]
+        CSVWriter[CSV Writer]
     end
     
     subgraph External [Externos]
-        Steel[Steel Cloud]
+        Steel[Steel.dev]
         CEJ[CEJ Website]
     end
     
     subgraph Output [Salida]
         MinIO[(MinIO/S3)]
-        DB[(PostgreSQL)]
-        Ably[Notificaciones Ably]
+        Ably[Ably Notifications]
     end
     
     API --> Temporal
@@ -51,35 +58,23 @@ flowchart TB
     Browser --> Steel
     Steel --> CEJ
     CEJ --> Parser
-    Parser --> Storage
-    Storage --> MinIO
-    Storage --> DB
+    Parser --> CSVWriter
+    CSVWriter --> MinIO
     Worker -.-> Ably
 ```
 
 ## Características
 
-- **Búsqueda masiva por correlativos**: Busca expedientes del 1 al 99999
-- **Modo local y stealth**: Playwright normal para desarrollo, Steel.dev para producción
+- **Búsqueda por correlativos**: Busca expedientes del 1 al 99999
+- **Modo local y stealth**: Playwright para desarrollo, Steel.dev para producción
 - **Procesamiento por bloques**: Divide el trabajo en bloques configurables
-- **Detención inteligente**: Se detiene automáticamente cuando la tasa de "no encontrado" es alta
-- **CSV incremental**: Guarda resultados progresivamente en MinIO
-- **Notificaciones Ably**: Alerta en tiempo real cuando se encuentra un caso
-
-## Diferencia con clamo-cej-connector
-
-| Aspecto | clamo-cej-connector | clamo-cej-discovery |
-|---------|---------------------|---------------------|
-| **Propósito** | Extrae detalles de casos conocidos | Descubre nuevos casos por correlativo |
-| **Entrada** | RUC o expediente específico | Rango de correlativos |
-| **Salida** | Kafka (para ingesta) | CSV en MinIO |
-| **Uso** | Monitoreo continuo de casos | Búsqueda inicial masiva |
+- **Detención inteligente**: Se detiene cuando la tasa de "no encontrado" es alta
+- **CSV incremental**: Guarda resultados progresivamente
+- **Notificaciones Ably**: Alerta cuando se encuentra un caso
 
 ## Workflows
 
 ### BulkSearchWorkflow
-
-Workflow principal para búsqueda masiva de expedientes:
 
 ```python
 @workflow.defn
@@ -97,12 +92,11 @@ class BulkSearchWorkflow:
         not_found_count = 0
         
         for block in blocks:
-            # 2. Procesar cada bloque
+            # 2. Procesar bloque
             block_result = await workflow.execute_activity(
                 search_correlativo_block,
                 args=[input.search_params, block],
                 start_to_close_timeout=timedelta(minutes=30),
-                retry_policy=RetryPolicy(maximum_attempts=3),
             )
             
             results.extend(block_result.cases)
@@ -120,210 +114,8 @@ class BulkSearchWorkflow:
         
         return BulkSearchResult(
             total_found=len(results),
-            csv_path=f"{input.empresa}/{input.instancia}/{input.especialidad}/{input.anio}/{input.distrito}.csv",
+            csv_path=f"{input.empresa}/{input.distrito}/{input.anio}.csv",
         )
-```
-
-## Actividades
-
-### Búsqueda en Navegador
-
-```python
-@activity.defn
-async def search_correlativo_block(
-    params: SearchParams,
-    block: CorrelativoBlock,
-) -> BlockResult:
-    """Busca un bloque de correlativos en el CEJ."""
-    
-    # Seleccionar modo de browser
-    if params.mode == "stealth":
-        browser = await create_steel_browser()
-    else:
-        browser = await create_local_browser()
-    
-    cases = []
-    not_found = 0
-    
-    try:
-        page = await browser.new_page()
-        
-        for correlativo in range(block.start, block.end + 1):
-            # Construir número de expediente
-            expediente = f"{correlativo:05d}-{params.anio}-0-{params.distrito_code}-{params.instancia_code}-{params.especialidad_code}"
-            
-            # Buscar en CEJ
-            result = await search_expediente(page, expediente)
-            
-            if result.found:
-                cases.append(result.case_data)
-                # Notificar si Ably está configurado
-                await notify_case_found(result.case_data)
-            else:
-                not_found += 1
-                
-    finally:
-        await browser.close()
-    
-    return BlockResult(cases=cases, not_found_count=not_found)
-```
-
-### Almacenamiento CSV
-
-```python
-@activity.defn
-async def save_csv_incremental(
-    empresa: str,
-    cases: list[CaseData],
-) -> str:
-    """Guarda casos en CSV incremental en MinIO."""
-    
-    # Formato del CSV
-    # - Separador: | (pipe)
-    # - Encoding: latin9
-    # - Sin header
-    # - 25 columnas
-    
-    csv_content = "\n".join([
-        "|".join([
-            case.expediente,
-            case.demandante,
-            case.demandado,
-            case.materia,
-            case.estado,
-            # ... 20 columnas más
-        ])
-        for case in cases
-    ])
-    
-    # Subir a MinIO
-    path = f"{empresa}/{case.instancia}/{case.especialidad}/{case.anio}/{case.distrito}.csv"
-    
-    await minio_client.put_object(
-        bucket=settings.BULK_SEARCH_CSV_BUCKET,
-        key=path,
-        data=csv_content.encode("latin9"),
-        content_type="text/csv",
-    )
-    
-    return path
-```
-
-## Configuración
-
-### Variables de Entorno
-
-```bash
-# Steel.dev (para modo stealth)
-STEEL_API_KEY=your_steel_api_key
-
-# Base de datos
-METADATA_DATABASE_URL=postgresql://user:pass@localhost:5432/cej_discovery
-BUSINESS_DATABASE_URL=postgresql://user:pass@localhost:5432/clamo
-
-# Temporal
-TEMPORAL_HOST=localhost:7233
-TEMPORAL_NAMESPACE=default
-
-# MinIO/S3
-ARTIFACT_STORE_S3_ENDPOINT=http://localhost:9000
-ARTIFACT_STORE_S3_ACCESS_KEY=minioadmin
-ARTIFACT_STORE_S3_SECRET_KEY=minioadmin
-BULK_SEARCH_CSV_BUCKET=cej-bulk-search
-
-# Ably (opcional)
-ABLY_API_KEY=your_ably_key
-```
-
-### Docker Compose
-
-```yaml
-version: '3.8'
-services:
-  cej-discovery-api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    environment:
-      - STEEL_API_KEY=${STEEL_API_KEY}
-      - TEMPORAL_HOST=temporal:7233
-      - METADATA_DATABASE_URL=${METADATA_DATABASE_URL}
-    ports:
-      - "8080:8080"
-    depends_on:
-      - temporal
-      - minio
-
-  cej-discovery-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    environment:
-      - STEEL_API_KEY=${STEEL_API_KEY}
-      - TEMPORAL_HOST=temporal:7233
-      - ARTIFACT_STORE_S3_ENDPOINT=http://minio:9000
-    depends_on:
-      - temporal
-      - minio
-
-  temporal:
-    image: temporalio/auto-setup:latest
-    ports:
-      - "7233:7233"
-
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-```
-
-## Uso
-
-### Iniciar Búsqueda Masiva
-
-```bash
-# Iniciar servicios
-docker compose -f docker-compose.dev.yml up -d
-
-# Ejecutar búsqueda masiva
-uv run python scripts/start_bulk_search.py \
-    "EmpresaTest" \
-    "LIMA" \
-    "Sala Superior" \
-    "Laboral" \
-    "2025" \
-    "" \
-    "local" \
-    1 \
-    100 \
-    10
-```
-
-**Parámetros:**
-
-| Parámetro | Descripción |
-|-----------|-------------|
-| `empresa` | Nombre de la empresa |
-| `distrito` | Distrito judicial |
-| `instancia` | Instancia (ej: "Sala Superior") |
-| `especialidad` | Especialidad (ej: "Laboral") |
-| `anio` | Año |
-| `parte` | Nombre de parte (opcional) |
-| `mode` | "local" o "stealth" |
-| `start` | Correlativo inicial |
-| `end` | Correlativo final |
-| `block_size` | Tamaño de bloque |
-
-### Prueba Rápida del Browser
-
-```bash
-# Probar búsqueda en modo local
-uv run python scripts/test_clamo_discovery_browser.py --mode local
-
-# Probar búsqueda en modo stealth
-uv run python scripts/test_clamo_discovery_browser.py --mode stealth
 ```
 
 ## Estructura del CSV
@@ -341,32 +133,68 @@ Los CSV se almacenan en MinIO con la estructura:
 | Header | Sin header |
 | Columnas | 25 |
 
-## Manejo de Errores
+## Configuración
 
-### Errores Comunes
+### Variables de Entorno
 
-| Error | Causa | Manejo |
-|-------|-------|--------|
-| `CaptchaDetected` | El CEJ muestra captcha | Cambiar a modo stealth con Steel |
-| `SessionExpired` | Sesión de browser expiró | Crear nueva sesión |
-| `RateLimited` | Demasiadas solicitudes | Backoff exponencial |
-| `HighNotFoundRate` | Muchos correlativos vacíos | Detención automática |
+```bash
+# Steel.dev (modo stealth)
+STEEL_API_KEY=...
 
-### Detención Inteligente
+# Temporal
+TEMPORAL_HOST=localhost:7233
+TEMPORAL_NAMESPACE=default
+
+# MinIO/S3
+ARTIFACT_STORE_S3_ENDPOINT=http://localhost:9000
+ARTIFACT_STORE_S3_ACCESS_KEY=minioadmin
+ARTIFACT_STORE_S3_SECRET_KEY=minioadmin
+BULK_SEARCH_CSV_BUCKET=cej-bulk-search
+
+# Ably (notificaciones)
+ABLY_API_KEY=...
+```
+
+## Uso
+
+### Iniciar Búsqueda Masiva
+
+```bash
+# Iniciar servicios
+docker compose -f docker-compose.dev.yml up -d
+
+# Ejecutar búsqueda
+uv run python scripts/start_bulk_search.py \
+    "EmpresaTest" \
+    "LIMA" \
+    "Sala Superior" \
+    "Laboral" \
+    "2025" \
+    "" \
+    "local" \
+    1 \
+    100 \
+    10
+```
+
+| Parámetro | Descripción |
+|-----------|-------------|
+| `empresa` | Nombre de la empresa |
+| `distrito` | Distrito judicial |
+| `instancia` | Instancia (ej: "Sala Superior") |
+| `especialidad` | Especialidad (ej: "Laboral") |
+| `anio` | Año |
+| `parte` | Nombre de parte (opcional) |
+| `mode` | "local" o "stealth" |
+| `start` | Correlativo inicial |
+| `end` | Correlativo final |
+| `block_size` | Tamaño de bloque |
+
+## Detención Inteligente
 
 El workflow se detiene automáticamente cuando:
 - La tasa de "no encontrado" supera el 95% en los últimos 100 correlativos
-- Se alcanza el límite de errores consecutivos (configurable)
-
-## Métricas
-
-| Métrica | Descripción |
-|---------|-------------|
-| `cej_discovery_searches_total` | Total de búsquedas realizadas |
-| `cej_discovery_cases_found` | Casos encontrados |
-| `cej_discovery_not_found` | Correlativos sin resultados |
-| `cej_discovery_block_duration_seconds` | Duración por bloque |
-| `cej_discovery_errors_total` | Errores por tipo |
+- Se alcanza el límite de errores consecutivos
 
 ## Desarrollo Local
 
@@ -377,25 +205,29 @@ uv sync
 # Instalar Playwright
 uv run playwright install chromium
 
-# Configurar variables de entorno
-cp .env.example .env
-
 # Ejecutar tests
 make test-browser
 make test-parser
-make test-storage
 
 # Todos los tests
 make check-all
 ```
 
-## Despliegues
+## Próximos Pasos
 
-El servicio tiene 3 despliegues en producción:
-
-| Despliegue | Descripción |
-|------------|-------------|
-| `prd-cej-discovery-api` | API REST para iniciar búsquedas |
-| `prd-cej-discovery-worker` | Worker de Temporal |
-| `prd-cej-discovery-browser` | Servicio de automatización de navegador |
-
+<CardGroup cols={2}>
+  <Card
+    title="clamo-cej-connector"
+    icon="plug"
+    href="/es/servicios/clamo-cej-connector"
+  >
+    Extracción detallada de casos conocidos.
+  </Card>
+  <Card
+    title="Pipeline de Ingesta"
+    icon="database"
+    href="/es/guias/debugging-ingesta"
+  >
+    Flujo completo de datos.
+  </Card>
+</CardGroup>

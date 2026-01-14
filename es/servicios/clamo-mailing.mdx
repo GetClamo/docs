@@ -5,7 +5,7 @@ description: Servicio de emails transaccionales con React Email y SendGrid
 
 # clamo-mailing
 
-Servicio para envío de emails transaccionales y notificaciones usando React Email y SendGrid.
+Servicio para envío de emails transaccionales y notificaciones usando **React Email** para templates y **SendGrid** para delivery.
 
 ## Información General
 
@@ -23,16 +23,16 @@ Servicio para envío de emails transaccionales y notificaciones usando React Ema
 ```mermaid
 flowchart LR
     subgraph Triggers [Disparadores]
-        API[APIs Clamo]
-        Webhooks[Webhooks]
-        Scheduler[Scheduler]
+        Tenant[clamo-tenant<br/>Invitaciones]
+        Cases[clamo-cases<br/>Alertas]
+        Scheduler[Scheduler<br/>Reportes]
     end
     
     subgraph Mailing [clamo-mailing]
-        Routes[Rutas]
-        Templates[Plantillas React Email]
-        Renderer[Renderizador de Email]
-        Sender[Enviador SendGrid]
+        Routes[Rutas Hono]
+        Templates[React Email<br/>Templates]
+        Renderer[Email Renderer]
+        Sender[SendGrid Client]
     end
     
     subgraph Delivery [Entrega]
@@ -40,8 +40,8 @@ flowchart LR
         Users[Usuarios]
     end
     
-    API --> Routes
-    Webhooks --> Routes
+    Tenant --> Routes
+    Cases --> Routes
     Scheduler --> Routes
     Routes --> Templates
     Templates --> Renderer
@@ -50,12 +50,19 @@ flowchart LR
     SendGrid --> Users
 ```
 
-## Plantillas
+## Templates Disponibles
 
-### Estructura
+| Template | Disparador | Descripción |
+|----------|------------|-------------|
+| `InvitationEmail` | clamo-tenant | Invitación a unirse a empresa |
+| `NewMovementEmail` | clamo-cases | Nuevo movimiento en caso |
+| `RiskAlertEmail` | clamo-cases | Alerta de cambio de riesgo |
+| `WeeklyReportEmail` | Scheduler | Resumen semanal |
+
+## Estructura de Directorios
 
 ```
-src/
+clamo-mailing/src/
 ├── emails/
 │   ├── components/
 │   │   ├── Header.tsx
@@ -66,11 +73,14 @@ src/
 │   ├── RiskAlertEmail.tsx
 │   └── WeeklyReportEmail.tsx
 ├── routes/
-│   └── send.ts
+│   ├── send.ts
+│   └── preview.ts
+├── lib/
+│   └── sendgrid.ts
 └── index.ts
 ```
 
-### Ejemplo: InvitationEmail
+## Ejemplo: InvitationEmail
 
 ```tsx
 // src/emails/InvitationEmail.tsx
@@ -81,10 +91,7 @@ import {
   Head,
   Heading,
   Html,
-  Img,
-  Link,
   Preview,
-  Section,
   Text,
 } from '@react-email/components';
 
@@ -109,13 +116,6 @@ export function InvitationEmail({
       </Preview>
       <Body style={main}>
         <Container style={container}>
-          <Img
-            src="https://clamo.dev/logo.png"
-            width="120"
-            height="40"
-            alt="Clamo"
-          />
-          
           <Heading style={heading}>
             Te han invitado a {companyName}
           </Heading>
@@ -125,142 +125,8 @@ export function InvitationEmail({
             como {role === 'admin' ? 'Administrador' : 'Miembro'}.
           </Text>
           
-          <Section style={buttonContainer}>
-            <Button style={button} href={inviteUrl}>
-              Aceptar Invitación
-            </Button>
-          </Section>
-          
-          <Text style={footer}>
-            Si no esperabas esta invitación, puedes ignorar este email.
-          </Text>
-        </Container>
-      </Body>
-    </Html>
-  );
-}
-
-const main = {
-  backgroundColor: '#f6f9fc',
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-};
-
-const container = {
-  backgroundColor: '#ffffff',
-  margin: '0 auto',
-  padding: '40px 20px',
-  maxWidth: '600px',
-};
-
-const heading = {
-  color: '#1a1a1a',
-  fontSize: '24px',
-  fontWeight: '600',
-  margin: '30px 0',
-};
-
-const text = {
-  color: '#4a4a4a',
-  fontSize: '16px',
-  lineHeight: '24px',
-};
-
-const buttonContainer = {
-  textAlign: 'center' as const,
-  margin: '30px 0',
-};
-
-const button = {
-  backgroundColor: '#3B22FF',
-  borderRadius: '6px',
-  color: '#ffffff',
-  fontSize: '16px',
-  fontWeight: '600',
-  padding: '12px 24px',
-  textDecoration: 'none',
-};
-
-const footer = {
-  color: '#8898aa',
-  fontSize: '14px',
-  marginTop: '30px',
-};
-```
-
-### Ejemplo: NewMovementEmail
-
-```tsx
-// src/emails/NewMovementEmail.tsx
-import {
-  Body,
-  Container,
-  Head,
-  Heading,
-  Html,
-  Preview,
-  Section,
-  Text,
-  Hr,
-} from '@react-email/components';
-
-interface NewMovementEmailProps {
-  userName: string;
-  caseName: string;
-  expediente: string;
-  movementDate: string;
-  movementDescription: string;
-  movementSummary: string;
-  caseUrl: string;
-}
-
-export function NewMovementEmail({
-  userName,
-  caseName,
-  expediente,
-  movementDate,
-  movementDescription,
-  movementSummary,
-  caseUrl,
-}: NewMovementEmailProps) {
-  return (
-    <Html>
-      <Head />
-      <Preview>
-        Nuevo movimiento en {expediente}
-      </Preview>
-      <Body style={main}>
-        <Container style={container}>
-          <Heading style={heading}>
-            Nuevo Movimiento Procesal
-          </Heading>
-          
-          <Text style={text}>
-            Hola {userName},
-          </Text>
-          
-          <Text style={text}>
-            Se ha registrado un nuevo movimiento en el caso:
-          </Text>
-          
-          <Section style={caseBox}>
-            <Text style={caseTitle}>{caseName}</Text>
-            <Text style={caseExpediente}>{expediente}</Text>
-          </Section>
-          
-          <Hr style={hr} />
-          
-          <Section style={movementBox}>
-            <Text style={movementDate}>{movementDate}</Text>
-            <Text style={movementDesc}>{movementDescription}</Text>
-            {movementSummary && (
-              <Text style={summary}>
-                <strong>Resumen:</strong> {movementSummary}
-              </Text>
-            )}
-          </Section>
-          
-          <Button style={button} href={caseUrl}>
-            Ver Caso Completo
+          <Button style={button} href={inviteUrl}>
+            Aceptar Invitación
           </Button>
         </Container>
       </Body>
@@ -269,9 +135,7 @@ export function NewMovementEmail({
 }
 ```
 
-## API
-
-### Endpoints
+## API Endpoints
 
 | Método | Endpoint | Descripción |
 |--------|----------|-------------|
@@ -279,52 +143,7 @@ export function NewMovementEmail({
 | POST | `/send/movement` | Notificar movimiento |
 | POST | `/send/risk-alert` | Alerta de riesgo |
 | POST | `/send/weekly-report` | Reporte semanal |
-| GET | `/preview/:template` | Vista previa de plantilla |
-
-### Ejemplo: Enviar Invitación
-
-```typescript
-// src/routes/send.ts
-import { Hono } from 'hono';
-import { render } from '@react-email/render';
-import { InvitationEmail } from '../emails/InvitationEmail';
-import { sendEmail } from '../lib/sendgrid';
-
-const app = new Hono();
-
-app.post('/invitation', async (c) => {
-  const body = await c.req.json();
-  
-  const {
-    to,
-    inviterName,
-    companyName,
-    inviteUrl,
-    role,
-  } = body;
-  
-  // Renderizar template
-  const html = render(
-    InvitationEmail({
-      inviterName,
-      companyName,
-      inviteUrl,
-      role,
-    })
-  );
-  
-  // Enviar email
-  await sendEmail({
-    to,
-    subject: `${inviterName} te ha invitado a ${companyName}`,
-    html,
-  });
-  
-  return c.json({ success: true });
-});
-
-export default app;
-```
+| GET | `/preview/:template` | Vista previa de template |
 
 ## Integración SendGrid
 
@@ -338,15 +157,10 @@ interface SendEmailOptions {
   to: string;
   subject: string;
   html: string;
-  attachments?: Array<{
-    content: string;
-    filename: string;
-    type: string;
-  }>;
 }
 
 export async function sendEmail(options: SendEmailOptions) {
-  const msg = {
+  await sgMail.send({
     to: options.to,
     from: {
       email: 'noreply@clamo.dev',
@@ -354,82 +168,12 @@ export async function sendEmail(options: SendEmailOptions) {
     },
     subject: options.subject,
     html: options.html,
-    attachments: options.attachments,
     trackingSettings: {
       clickTracking: { enable: true },
       openTracking: { enable: true },
     },
-  };
-  
-  await sgMail.send(msg);
+  });
 }
-
-export async function sendBulkEmail(
-  recipients: string[],
-  subject: string,
-  html: string
-) {
-  const messages = recipients.map(to => ({
-    to,
-    from: { email: 'noreply@clamo.dev', name: 'Clamo' },
-    subject,
-    html,
-  }));
-  
-  await sgMail.send(messages);
-}
-```
-
-## Vista Previa de Plantillas
-
-```typescript
-// src/routes/preview.ts
-import { Hono } from 'hono';
-import { render } from '@react-email/render';
-import * as templates from '../emails';
-
-const app = new Hono();
-
-app.get('/:template', async (c) => {
-  const templateName = c.req.param('template');
-  const Template = templates[templateName];
-  
-  if (!Template) {
-    return c.text('Template not found', 404);
-  }
-  
-  // Mock data para preview
-  const mockData = getMockData(templateName);
-  
-  const html = render(Template(mockData));
-  
-  return c.html(html);
-});
-
-function getMockData(templateName: string) {
-  const mockDataMap = {
-    InvitationEmail: {
-      inviterName: 'Juan Pérez',
-      companyName: 'Empresa Demo S.A.C.',
-      inviteUrl: 'https://app.clamo.dev/invite/abc123',
-      role: 'admin',
-    },
-    NewMovementEmail: {
-      userName: 'María García',
-      caseName: 'Pérez vs Empresa S.A.C.',
-      expediente: '00001-2024-0-1234-JR-LA-01',
-      movementDate: '02 de Enero, 2025',
-      movementDescription: 'RESOLUCIÓN N° 15: Se tiene por contestada la demanda',
-      movementSummary: 'El juzgado admite la contestación de demanda.',
-      caseUrl: 'https://app.clamo.dev/cases/case_abc123',
-    },
-    // ... más mock data
-  };
-  
-  return mockDataMap[templateName] || {};
-}
-
-export default app;
 ```
 
 ## Configuración
@@ -457,19 +201,29 @@ pnpm install
 # Ejecutar en desarrollo
 pnpm dev
 
-# Preview de emails
+# Preview de emails (React Email)
 pnpm email:preview
+# Abre http://localhost:3000
 
 # Build
 pnpm build
 ```
 
-### Servidor de Vista Previa de Email
+## Próximos Pasos
 
-```bash
-# Iniciar servidor de vista previa
-npx email dev
-
-# Abre http://localhost:3000 para ver plantillas
-```
-
+<CardGroup cols={2}>
+  <Card
+    title="clamo-tenant"
+    icon="building"
+    href="/es/servicios/clamo-tenant"
+  >
+    Servicio que dispara invitaciones.
+  </Card>
+  <Card
+    title="clamo-cases"
+    icon="folder"
+    href="/es/servicios/clamo-cases"
+  >
+    Servicio que dispara alertas.
+  </Card>
+</CardGroup>

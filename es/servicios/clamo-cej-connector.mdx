@@ -1,11 +1,11 @@
 ---
 title: clamo-cej-connector
-description: Servicio de scraping automatizado del Centro de Justicia Electrónico
+description: Servicio de scraping y extracción de datos del CEJ con Temporal
 ---
 
 # clamo-cej-connector
 
-Servicio Python que automatiza la extracción de datos de expedientes judiciales desde el CEJ (Centro de Justicia Electrónico) del Poder Judicial peruano.
+Servicio Python que automatiza la extracción de datos de expedientes judiciales desde el CEJ (Centro de Justicia Electrónico) del Poder Judicial peruano. Usa **Temporal** para orquestación y **Steel.dev** para automatización de navegador.
 
 ## Información General
 
@@ -14,37 +14,46 @@ Servicio Python que automatiza la extracción de datos de expedientes judiciales
 | **Repositorio** | `GetClamo/clamo-cej-connector` |
 | **Lenguaje** | Python 3.11 |
 | **Orquestación** | Temporal |
-| **Navegador** | Steel + Playwright |
+| **Navegador** | Steel.dev + Playwright |
 | **LLM** | Anthropic Claude |
+| **Salida** | Kafka → clamo-ingest-go |
 
 ## Arquitectura
 
 ```mermaid
 flowchart TB
-    subgraph Scheduler [Programación]
+    subgraph Trigger [Disparadores]
         Cron[Cron Jobs]
-        Temporal[Temporal Server]
+        API[API Request]
+    end
+    
+    subgraph Temporal [Temporal Server]
+        Scheduler[Scheduler]
+        Workflows[Workflows]
     end
     
     subgraph Connector [clamo-cej-connector]
         Worker[Temporal Worker]
-        Browser[Controlador de Navegador]
-        Parser[Analizador HTML]
-        Normalizer[Normalizador LLM]
+        Browser[Steel Browser]
+        Parser[HTML Parser]
+        Normalizer[LLM Normalizer]
     end
     
     subgraph External [Externos]
-        Steel[Steel Cloud]
+        Steel[Steel.dev Cloud]
         CEJ[CEJ Website]
         Anthropic[Anthropic API]
     end
     
     subgraph Output [Salida]
         Kafka[(Kafka)]
+        IngestGo[clamo-ingest-go]
     end
     
-    Cron --> Temporal
-    Temporal --> Worker
+    Cron --> Scheduler
+    API --> Scheduler
+    Scheduler --> Workflows
+    Workflows --> Worker
     Worker --> Browser
     Browser --> Steel
     Steel --> CEJ
@@ -52,17 +61,27 @@ flowchart TB
     Parser --> Normalizer
     Normalizer --> Anthropic
     Normalizer --> Kafka
+    Kafka --> IngestGo
 ```
+
+## Flujo de Extracción
+
+1. **Trigger**: Cron job o request manual inicia workflow
+2. **Browser Session**: Crea sesión en Steel.dev con proxy peruano
+3. **Navegación**: Busca expediente en CEJ
+4. **Parsing**: Extrae HTML de movimientos
+5. **Normalización**: Claude normaliza datos crudos
+6. **Publicación**: Envía a Kafka topic `cej.case.ready`
 
 ## Workflows
 
-### ExtractCasesWorkflow
+### ExtractCaseWorkflow
 
-Workflow principal para extraer casos de un RUC:
+Workflow principal para extraer un caso específico:
 
 ```python
 @workflow.defn
-class ExtractCasesWorkflow:
+class ExtractCaseWorkflow:
     @workflow.run
     async def run(self, input: ExtractInput) -> ExtractResult:
         # 1. Crear sesión de browser
@@ -73,41 +92,28 @@ class ExtractCasesWorkflow:
         )
         
         try:
-            # 2. Navegar y buscar
-            search_results = await workflow.execute_activity(
-                search_by_ruc,
-                args=[session, input.ruc],
+            # 2. Navegar y extraer
+            raw_data = await workflow.execute_activity(
+                extract_case_html,
+                args=[session, input.expediente],
                 start_to_close_timeout=timedelta(minutes=5),
             )
             
-            # 3. Extraer detalle de cada caso
-            cases = []
-            for result in search_results:
-                case_detail = await workflow.execute_activity(
-                    extract_case_detail,
-                    args=[session, result.expediente],
-                    start_to_close_timeout=timedelta(minutes=3),
-                )
-                cases.append(case_detail)
-            
-            # 4. Normalizar con LLM
+            # 3. Normalizar con LLM
             normalized = await workflow.execute_activity(
-                normalize_cases,
-                args=[cases],
-                start_to_close_timeout=timedelta(minutes=5),
+                normalize_case_data,
+                args=[raw_data],
+                start_to_close_timeout=timedelta(minutes=3),
             )
             
-            # 5. Publicar a Kafka
+            # 4. Publicar a Kafka
             await workflow.execute_activity(
                 publish_to_kafka,
                 args=[input.company_id, normalized],
                 start_to_close_timeout=timedelta(minutes=1),
             )
             
-            return ExtractResult(
-                success=True,
-                cases_count=len(normalized),
-            )
+            return ExtractResult(success=True)
             
         finally:
             await workflow.execute_activity(
@@ -116,52 +122,54 @@ class ExtractCasesWorkflow:
             )
 ```
 
-### DiscoverNewCasesWorkflow
+### RefreshCasesWorkflow
 
-Workflow para descubrir nuevos casos:
+Workflow para actualizar casos existentes de una empresa:
 
 ```python
 @workflow.defn
-class DiscoverNewCasesWorkflow:
+class RefreshCasesWorkflow:
     @workflow.run
-    async def run(self, input: DiscoverInput) -> DiscoverResult:
-        # Buscar casos nuevos desde última fecha conocida
-        new_cases = await workflow.execute_activity(
-            search_new_cases,
-            args=[input.ruc, input.last_known_date],
-            start_to_close_timeout=timedelta(minutes=10),
+    async def run(self, input: RefreshInput) -> RefreshResult:
+        # Obtener casos a actualizar
+        cases = await workflow.execute_activity(
+            get_cases_to_refresh,
+            args=[input.company_id],
         )
         
-        # Para cada caso nuevo, iniciar workflow de extracción
-        for case in new_cases:
-            await workflow.execute_child_workflow(
-                ExtractCasesWorkflow.run,
+        results = []
+        for case in cases:
+            # Ejecutar extracción como child workflow
+            result = await workflow.execute_child_workflow(
+                ExtractCaseWorkflow.run,
                 ExtractInput(
                     company_id=input.company_id,
-                    ruc=input.ruc,
                     expediente=case.expediente,
                 ),
             )
+            results.append(result)
         
-        return DiscoverResult(new_cases_count=len(new_cases))
+        return RefreshResult(
+            total=len(cases),
+            success=sum(1 for r in results if r.success),
+        )
 ```
 
 ## Actividades
 
-### Control de Navegador
+### Browser Control
 
 ```python
 @activity.defn
 async def create_browser_session() -> BrowserSession:
-    """Crea una sesión de browser en Steel."""
+    """Crea sesión de browser en Steel.dev."""
     steel = SteelClient(api_key=os.environ["STEEL_API_KEY"])
     
     session = await steel.create_session(
         browser_type="chromium",
-        headless=True,
         proxy={
             "type": "residential",
-            "country": "PE",  # Proxy peruano
+            "country": "PE",  # Proxy peruano requerido
         },
     )
     
@@ -171,11 +179,11 @@ async def create_browser_session() -> BrowserSession:
     )
 
 @activity.defn
-async def search_by_ruc(
+async def extract_case_html(
     session: BrowserSession,
-    ruc: str,
-) -> list[SearchResult]:
-    """Busca casos por RUC en el CEJ."""
+    expediente: str,
+) -> RawCaseData:
+    """Extrae HTML del caso desde CEJ."""
     async with async_playwright() as p:
         browser = await p.chromium.connect_over_cdp(session.ws_endpoint)
         page = await browser.new_page()
@@ -183,79 +191,62 @@ async def search_by_ruc(
         # Navegar al CEJ
         await page.goto("https://cej.pj.gob.pe/cej/forms/busquedaform.html")
         
-        # Llenar formulario
-        await page.fill("#txtRuc", ruc)
+        # Buscar por expediente
+        await page.fill("#txtExpediente", expediente)
         await page.click("#btnBuscar")
-        
-        # Esperar resultados
         await page.wait_for_selector(".resultado-busqueda")
         
-        # Extraer resultados
-        results = await page.evaluate("""
-            () => {
-                const rows = document.querySelectorAll('.resultado-busqueda tr');
-                return Array.from(rows).map(row => ({
-                    expediente: row.querySelector('.expediente')?.textContent,
-                    demandante: row.querySelector('.demandante')?.textContent,
-                    demandado: row.querySelector('.demandado')?.textContent,
-                }));
-            }
-        """)
+        # Extraer HTML de movimientos
+        movements_html = await page.inner_html("#tablaMovimientos")
         
-        return [SearchResult(**r) for r in results]
+        return RawCaseData(
+            expediente=expediente,
+            html=movements_html,
+            extracted_at=datetime.utcnow(),
+        )
 ```
 
 ### Normalización LLM
 
 ```python
 @activity.defn
-async def normalize_cases(cases: list[RawCase]) -> list[NormalizedCase]:
-    """Normaliza casos usando Claude."""
+async def normalize_case_data(raw: RawCaseData) -> NormalizedCase:
+    """Normaliza datos usando Claude."""
     anthropic = Anthropic()
-    normalized = []
     
-    for case in cases:
-        # Normalizar información general
-        response = await anthropic.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=2000,
-            messages=[{
-                "role": "user",
-                "content": f"""
-                Extrae y normaliza la información del siguiente caso judicial peruano.
-                
-                Datos crudos:
-                {json.dumps(case.dict(), ensure_ascii=False, indent=2)}
-                
-                Responde en JSON con este formato:
-                {{
-                    "expediente": "formato estándar XXXXX-XXXX-X-XXXX-XX-XX-XX",
-                    "plaintiff": "nombre normalizado del demandante",
-                    "defendant": "nombre normalizado del demandado",
-                    "subjectMatter": "materia del caso",
-                    "district": "distrito judicial",
-                    "court": "juzgado",
-                    "processType": "tipo de proceso",
-                    "filingDate": "YYYY-MM-DD",
-                    "status": "EN_TRAMITE|EN_EJECUCION|ARCHIVADO|CONCLUIDO",
-                    "movements": [
-                        {{
-                            "date": "YYYY-MM-DD",
-                            "description": "descripción normalizada",
-                            "classification": "RESOLUCION|ESCRITO|NOTIFICACION|AUDIENCIA|OTRO",
-                            "isNotification": true/false,
-                            "summary": "resumen en una oración"
-                        }}
-                    ]
-                }}
-                """
-            }],
-        )
-        
-        normalized_data = json.loads(response.content[0].text)
-        normalized.append(NormalizedCase(**normalized_data))
+    response = await anthropic.messages.create(
+        model="claude-3-haiku-20240307",
+        max_tokens=4000,
+        messages=[{
+            "role": "user",
+            "content": f"""
+            Extrae y normaliza los movimientos del siguiente HTML de un caso judicial peruano.
+            
+            HTML:
+            {raw.html}
+            
+            Responde en JSON con este formato:
+            {{
+                "movements": [
+                    {{
+                        "stablePosition": 1,
+                        "cejEventDate": "YYYY-MM-DD",
+                        "cejActo": "tipo de acto",
+                        "cejResolution": "número de resolución",
+                        "cejDescription": "descripción original",
+                        "summary": "resumen en una oración"
+                    }}
+                ]
+            }}
+            """
+        }],
+    )
     
-    return normalized
+    data = json.loads(response.content[0].text)
+    return NormalizedCase(
+        expediente=raw.expediente,
+        movements=data["movements"],
+    )
 ```
 
 ## Configuración
@@ -263,7 +254,7 @@ async def normalize_cases(cases: list[RawCase]) -> list[NormalizedCase]:
 ### Variables de Entorno
 
 ```bash
-# Steel (Browser automation)
+# Steel.dev (Browser automation)
 STEEL_API_KEY=...
 
 # Temporal
@@ -275,9 +266,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # Kafka
 KAFKA_BROKERS=localhost:9092
+KAFKA_TOPIC=cej.case.ready
 
-# Proxy (opcional)
-PROXY_URL=...
+# Tenant SDK (para obtener casos)
+TENANT_SERVICE_URL=http://localhost:4001
+CASES_SERVICE_URL=http://localhost:4000
 ```
 
 ### Docker Compose
@@ -285,7 +278,7 @@ PROXY_URL=...
 ```yaml
 version: '3.8'
 services:
-  cej-connector:
+  cej-connector-worker:
     build: .
     environment:
       - STEEL_API_KEY=${STEEL_API_KEY}
@@ -300,7 +293,7 @@ services:
     image: temporalio/auto-setup:latest
     ports:
       - "7233:7233"
-      - "8233:8233"
+      - "8233:8233"  # Temporal UI
 
   kafka:
     image: bitnami/kafka:latest
@@ -308,44 +301,15 @@ services:
       - "9092:9092"
 ```
 
-## Programación
-
-### Configuración de Trabajos
-
-```python
-# scheduler.py
-from temporalio.client import Client
-
-async def setup_schedules():
-    client = await Client.connect("localhost:7233")
-    
-    # Extraer casos cada 4 horas para empresas Pro
-    for company in await get_pro_companies():
-        for entity in company.monitored_entities:
-            await client.create_schedule(
-                f"extract-{company.id}-{entity.ruc}",
-                Schedule(
-                    action=ScheduleActionStartWorkflow(
-                        ExtractCasesWorkflow.run,
-                        ExtractInput(
-                            company_id=company.id,
-                            ruc=entity.ruc,
-                        ),
-                    ),
-                    spec=ScheduleSpec(
-                        intervals=[ScheduleIntervalSpec(every=timedelta(hours=4))],
-                    ),
-                ),
-            )
-```
+<Note>
+**Temporal UI:** Disponible en http://localhost:8233 cuando ejecutas con Docker Compose.
+</Note>
 
 ## Manejo de Errores
 
-### Errores Comunes
-
 | Error | Causa | Manejo |
 |-------|-------|--------|
-| `CaptchaDetected` | El CEJ muestra captcha | Reintentar con nuevo proxy |
+| `CaptchaDetected` | CEJ muestra captcha | Reintentar con nuevo proxy |
 | `SessionExpired` | Sesión de browser expiró | Crear nueva sesión |
 | `RateLimited` | Demasiadas solicitudes | Backoff exponencial |
 | `ParseError` | HTML inesperado | Log para revisión manual |
@@ -359,21 +323,11 @@ retry_policy = RetryPolicy(
     backoff_coefficient=2.0,
     maximum_attempts=5,
     non_retryable_error_types=[
-        "InvalidRUCError",
+        "InvalidExpedienteError",
         "CompanyNotFoundError",
     ],
 )
 ```
-
-## Métricas
-
-| Métrica | Descripción |
-|---------|-------------|
-| `cej_extraction_total` | Total de extracciones |
-| `cej_extraction_duration_seconds` | Duración de extracción |
-| `cej_cases_extracted` | Casos extraídos |
-| `cej_movements_extracted` | Movimientos extraídos |
-| `cej_errors_total` | Errores por tipo |
 
 ## Desarrollo Local
 
@@ -388,6 +342,24 @@ docker-compose up -d temporal
 python -m clamo_cej_connector.worker
 
 # Ejecutar workflow manualmente
-python -m clamo_cej_connector.cli extract --ruc 20123456789
+python -m clamo_cej_connector.cli extract --expediente "00001-2024-0-1234-JR-LA-01"
 ```
 
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="clamo-ingest-go"
+    icon="database"
+    href="/es/servicios/clamo-ingest-go"
+  >
+    Worker que consume de Kafka e inserta en tenant DBs.
+  </Card>
+  <Card
+    title="clamo-cej-discovery"
+    icon="magnifying-glass"
+    href="/es/servicios/clamo-cej-discovery"
+  >
+    Búsqueda masiva de expedientes.
+  </Card>
+</CardGroup>

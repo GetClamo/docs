@@ -5,7 +5,7 @@ description: Servicio de sincronización de datos hacia Tinybird para analytics
 
 # clamo-sync
 
-Servicio Rust que sincroniza datos desde las bases de datos de tenant hacia Tinybird para analytics en tiempo real.
+Servicio Rust que sincroniza datos desde las bases de datos de tenant hacia **Tinybird** para analytics en tiempo real.
 
 ## Información General
 
@@ -15,54 +15,66 @@ Servicio Rust que sincroniza datos desde las bases de datos de tenant hacia Tiny
 | **Lenguaje** | Rust |
 | **Runtime** | Tokio |
 | **Destino** | Tinybird |
+| **Frecuencia** | Cada 5 minutos |
 
 ## Arquitectura
 
 ```mermaid
 flowchart LR
-    subgraph Sources [Fuentes]
+    subgraph Sources [Tenant DBs]
         T1[(Tenant 1)]
         T2[(Tenant 2)]
         T3[(Tenant 3)]
     end
     
     subgraph Sync [clamo-sync]
-        Scheduler[Programador]
-        ChangeDetector[Detector de Cambios]
-        Transformer[Transformador]
-        TinybirdWriter[Escritor Tinybird]
+        Scheduler[Scheduler]
+        ChangeDetector[Change Detector]
+        Transformer[Transformer]
+        TinybirdWriter[Tinybird Writer]
+    end
+    
+    subgraph Resolution [Resolución]
+        TenantSDK[clamo-tenant<br/>/internal/v1/...]
+        Vault[(Supabase Vault)]
     end
     
     subgraph Destination [Destino]
         Tinybird[(Tinybird)]
     end
     
-    T1 --> ChangeDetector
-    T2 --> ChangeDetector
-    T3 --> ChangeDetector
     Scheduler --> ChangeDetector
+    ChangeDetector --> TenantSDK
+    TenantSDK --> Vault
+    ChangeDetector --> T1
+    ChangeDetector --> T2
+    ChangeDetector --> T3
     ChangeDetector --> Transformer
     Transformer --> TinybirdWriter
     TinybirdWriter --> Tinybird
 ```
 
+## Flujo de Sincronización
+
+1. **Scheduler**: Ejecuta cada 5 minutos
+2. **Obtener empresas**: Lista empresas activas desde control DB
+3. **Por cada tenant**:
+   - Obtener connection string via Tenant SDK
+   - Detectar cambios desde última sincronización
+   - Transformar a formato Tinybird
+   - Enviar en batch a Tinybird
+4. **Actualizar marca de tiempo**
+
 ## Implementación
 
-### Main
+### Main Loop
 
 ```rust
-use tokio::time::{interval, Duration};
-use tracing::{info, error};
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Inicializar logging
     tracing_subscriber::init();
     
-    // Cargar configuración
     let config = Config::from_env()?;
-    
-    // Crear syncer
     let syncer = Syncer::new(config).await?;
     
     // Ejecutar sync periódico
@@ -91,38 +103,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Sincronizador
 
 ```rust
-use sqlx::{PgPool, postgres::PgPoolOptions};
-use reqwest::Client;
-
 pub struct Syncer {
-    control_pool: PgPool,
+    tenant_client: TenantSDKClient,
     tinybird: TinybirdClient,
-    vault: VaultClient,
 }
 
 impl Syncer {
-    pub async fn new(config: Config) -> Result<Self, Error> {
-        let control_pool = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(&config.control_database_url)
-            .await?;
-        
-        let tinybird = TinybirdClient::new(&config.tinybird_token);
-        let vault = VaultClient::new(&config.supabase_url, &config.supabase_key);
-        
-        Ok(Self {
-            control_pool,
-            tinybird,
-            vault,
-        })
-    }
-    
     pub async fn sync_all(&self) -> Result<SyncStats, Error> {
         let start = std::time::Instant::now();
         let mut stats = SyncStats::default();
         
         // Obtener empresas activas
-        let companies = self.get_active_companies().await?;
+        let companies = self.tenant_client.list_active_companies().await?;
         
         for company in companies {
             match self.sync_tenant(&company).await {
@@ -146,17 +138,18 @@ impl Syncer {
     }
     
     async fn sync_tenant(&self, company: &Company) -> Result<TenantStats, Error> {
-        // Obtener conexión del tenant
-        let tenant_pool = self.get_tenant_pool(&company.id).await?;
+        // Obtener conexión via Tenant SDK
+        let conn_info = self.tenant_client
+            .get_database_connection(&company.id)
+            .await?;
         
-        // Sincronizar casos
+        let tenant_pool = PgPool::connect(&conn_info.connection_string).await?;
+        
+        // Sincronizar casos modificados
         let cases_stats = self.sync_cases(&tenant_pool, &company.id).await?;
         
-        // Sincronizar movimientos
+        // Sincronizar movimientos modificados
         let movements_stats = self.sync_movements(&tenant_pool, &company.id).await?;
-        
-        // Actualizar marca de tiempo
-        self.update_last_sync(&company.id).await?;
         
         Ok(TenantStats {
             cases_synced: cases_stats.count,
@@ -169,75 +162,51 @@ impl Syncer {
 ### Detección de Cambios
 
 ```rust
-impl Syncer {
-    async fn sync_cases(&self, pool: &PgPool, company_id: &str) -> Result<SyncResult, Error> {
-        // Obtener última sincronización
-        let last_sync = self.get_last_sync(company_id).await?;
-        
-        // Obtener casos modificados
-        let cases: Vec<CaseRow> = sqlx::query_as!(
-            CaseRow,
-            r#"
-            SELECT
-                id,
-                expediente,
-                plaintiff,
-                defendant,
-                subject_matter,
-                risk_level as "risk_level: RiskLevel",
-                claim_amount,
-                district,
-                court,
-                current_judge,
-                process_type,
-                filing_date,
-                status as "status: CaseStatus",
-                stage_code,
-                substage_code,
-                created_at,
-                updated_at
-            FROM cases
-            WHERE updated_at > $1
-            ORDER BY updated_at
-            LIMIT 10000
-            "#,
-            last_sync,
-        )
-        .fetch_all(pool)
-        .await?;
-        
-        if cases.is_empty() {
-            return Ok(SyncResult { count: 0 });
-        }
-        
-        // Transformar a formato Tinybird
-        let rows: Vec<TinybirdCaseRow> = cases
-            .iter()
-            .map(|c| TinybirdCaseRow {
-                company_id: company_id.to_string(),
-                case_id: c.id.clone(),
-                expediente: c.expediente.clone(),
-                plaintiff: c.plaintiff.clone(),
-                defendant: c.defendant.clone(),
-                subject_matter: c.subject_matter.clone(),
-                risk_level: c.risk_level.to_string(),
-                claim_amount: c.claim_amount,
-                district: c.district.clone(),
-                court: c.court.clone(),
-                status: c.status.to_string(),
-                stage_code: c.stage_code.clone(),
-                substage_code: c.substage_code.clone(),
-                filing_date: c.filing_date,
-                created_at: c.created_at,
-                updated_at: c.updated_at,
-            })
-            .collect();
-        
-        // Enviar a Tinybird
-        self.tinybird.ingest("cases_ds", &rows).await?;
-        
-        Ok(SyncResult { count: rows.len() })
+async fn sync_cases(&self, pool: &PgPool, company_id: &str) -> Result<SyncResult, Error> {
+    // Obtener última sincronización
+    let last_sync = self.get_last_sync(company_id).await?;
+    
+    // Obtener casos modificados
+    let cases: Vec<CaseRow> = sqlx::query_as!(
+        CaseRow,
+        r#"
+        SELECT
+            id,
+            case_number,
+            company_id,
+            subject_matter,
+            process_type,
+            stage,
+            cej_judicial_district,
+            court,
+            judge,
+            filing_date,
+            created_at,
+            updated_at
+        FROM "Case"
+        WHERE updated_at > $1
+        ORDER BY updated_at
+        LIMIT 10000
+        "#,
+        last_sync,
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    if cases.is_empty() {
+        return Ok(SyncResult { count: 0 });
     }
+    
+    // Transformar a formato Tinybird
+    let rows: Vec<TinybirdCaseRow> = cases
+        .iter()
+        .map(|c| self.transform_case(c, company_id))
+        .collect();
+    
+    // Enviar a Tinybird
+    self.tinybird.ingest("cases_ds", &rows).await?;
+    
+    Ok(SyncResult { count: rows.len() })
 }
 ```
 
@@ -245,20 +214,12 @@ impl Syncer {
 
 ```rust
 pub struct TinybirdClient {
-    client: Client,
+    client: reqwest::Client,
     token: String,
     base_url: String,
 }
 
 impl TinybirdClient {
-    pub fn new(token: &str) -> Self {
-        Self {
-            client: Client::new(),
-            token: token.to_string(),
-            base_url: "https://api.tinybird.co".to_string(),
-        }
-    }
-    
     pub async fn ingest<T: Serialize>(&self, datasource: &str, rows: &[T]) -> Result<(), Error> {
         // Convertir a NDJSON
         let ndjson: String = rows
@@ -291,12 +252,8 @@ impl TinybirdClient {
 ### Variables de Entorno
 
 ```bash
-# Control Database
-CONTROL_DATABASE_URL=postgresql://...
-
-# Supabase (Vault)
-SUPABASE_URL=https://...
-SUPABASE_SERVICE_KEY=...
+# Tenant SDK
+TENANT_SERVICE_URL=http://localhost:4001
 
 # Tinybird
 TINYBIRD_TOKEN=p.eyJ...
@@ -306,27 +263,7 @@ SYNC_INTERVAL_SECONDS=300
 SYNC_BATCH_SIZE=10000
 ```
 
-### Cargo.toml
-
-```toml
-[package]
-name = "clamo-sync"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "chrono"] }
-reqwest = { version = "0.11", features = ["json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
-thiserror = "1"
-```
-
-## Docker
+### Docker
 
 ```dockerfile
 FROM rust:1.75-alpine AS builder
@@ -348,8 +285,6 @@ CMD ["/clamo-sync"]
 ## Métricas
 
 ```rust
-use prometheus::{Counter, Histogram, register_counter, register_histogram};
-
 lazy_static! {
     static ref SYNC_TOTAL: Counter = register_counter!(
         "sync_total",
@@ -384,3 +319,21 @@ cargo test
 cargo build --release
 ```
 
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="clamo-dashboards"
+    icon="chart-bar"
+    href="/es/servicios/clamo-dashboards"
+  >
+    Consume datos de Tinybird para dashboards.
+  </Card>
+  <Card
+    title="ask-clamo"
+    icon="robot"
+    href="/es/servicios/ask-clamo"
+  >
+    Perfil Clamy usa Tinybird para analytics.
+  </Card>
+</CardGroup>

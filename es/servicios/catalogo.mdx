@@ -142,16 +142,29 @@ Servicios complementarios para funcionalidades específicas.
   </Card>
   
   <Card
-    title="ask-clamo"
+    title="ask-clamo (luna)"
     icon="robot"
     href="/es/servicios/ask-clamo"
   >
-    **Asistentes IA**
+    **Asistente IA Unificado**
     
-    Agentes LangGraph unificados para consultas de casos (Javi), analytics (Clamy) y asistencia global (Luna).
+    Servicio LangGraph que contiene los perfiles Javi (casos), Clamy (analytics) y Luna (global) con aislamiento de herramientas.
     
     - Python / LangGraph
-    - Anthropic
+    - Puerto: 8000
+  </Card>
+  
+  <Card
+    title="clamo-tools"
+    icon="wrench"
+    href="/es/servicios/clamo-tools"
+  >
+    **Servidor de Herramientas**
+    
+    Herramientas remotas para el asistente IA usando el framework Olive.
+    
+    - Python / FastAPI
+    - Puerto: 8080
   </Card>
 </CardGroup>
 
@@ -168,10 +181,10 @@ Servicios complementarios para funcionalidades específicas.
 | clamo-sync | Rust | - | Neon | - |
 | clamo-mailing | TypeScript | Hono | PostgreSQL | - |
 | clamo-dashboards | Rust | Axum | Neon | - |
-| ask-clamo | Python | LangGraph | - | - |
+| luna / ask-clamo | Python | LangGraph | - | - |
+| clamo-tools | Python | FastAPI/Olive | - | - |
 | clamo-web-app | TypeScript | Next.js 15 | - | - |
 | clamo-ui | TypeScript | React | - | - |
-| clamo-desktop-app | TypeScript | Electron | - | - |
 | clamo-widget-server | TypeScript | - | - | - |
 | clamo-clickhouse | - | Tinybird | ClickHouse | - |
 
@@ -185,7 +198,8 @@ Servicios complementarios para funcionalidades específicas.
 | clamo-mailing | 4002 |
 | clamo-widget-server | 3005 |
 | clamo-dashboards | 8020 |
-| ask-clamo (LangGraph) | 8123 |
+| luna / ask-clamo (LangGraph) | 8000 |
+| clamo-tools (Olive) | 8080 |
 
 ## Dependencias entre Servicios
 
