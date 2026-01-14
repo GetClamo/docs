@@ -1,27 +1,28 @@
 ---
 title: clamo-ingest-go
-description: Worker de alta performance para ingesta de datos en Go
+description: High-performance worker for data ingestion from Kafka
 ---
 
 # clamo-ingest-go
 
-Worker de alta performance en Go para la ingesta de datos desde Kafka hacia las bases de datos de tenant.
+High-performance Go worker for data ingestion from Kafka to tenant databases. Consumes events from the `cej.case.ready` topic and inserts them into the corresponding databases.
 
-## Información General
+## General Information
 
-| Propiedad | Valor |
-|-----------|-------|
-| **Repositorio** | `GetClamo/clamo-ingest-go` |
-| **Lenguaje** | Go 1.22 |
-| **Mensajería** | Kafka |
-| **Base de Datos** | PostgreSQL (pgx) |
+| Property | Value |
+|----------|-------|
+| **Repository** | `GetClamo/clamo-ingest-go` |
+| **Language** | Go 1.22 |
+| **Messaging** | Kafka |
+| **Database** | PostgreSQL (pgx) |
+| **Cache** | LRU for tenant connections |
 
-## Arquitectura
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph Input [Entrada]
-        Kafka[(Kafka)]
+    subgraph Input [Input]
+        Kafka[(Kafka<br/>cej.case.ready)]
     end
     
     subgraph Worker [clamo-ingest-go]
@@ -31,7 +32,12 @@ flowchart LR
         BatchWriter[Batch Writer]
     end
     
-    subgraph Output [Salida]
+    subgraph TenantSDK [Resolution]
+        TenantService[clamo-tenant<br/>/internal/v1/...]
+        Vault[(Supabase Vault)]
+    end
+    
+    subgraph Output [Tenant DBs]
         T1[(Tenant 1)]
         T2[(Tenant 2)]
         T3[(Tenant 3)]
@@ -40,47 +46,33 @@ flowchart LR
     Kafka --> Consumer
     Consumer --> Validator
     Validator --> Router
+    Router --> TenantSDK
+    TenantSDK --> Vault
     Router --> BatchWriter
     BatchWriter --> T1
     BatchWriter --> T2
     BatchWriter --> T3
 ```
 
-## Procesamiento de Eventos
+## Processing Flow
+
+1. **Consume**: Read messages from `cej.case.ready` topic
+2. **Validate**: Verify event structure
+3. **Group**: Group by `companyId` for batch insert
+4. **Resolve**: Get connection string via Tenant SDK
+5. **Insert**: Use `COPY` or upsert for bulk insertion
+6. **Commit**: Confirm offset in Kafka
+
+## Implementation
 
 ### Consumer
 
 ```go
-package main
-
-import (
-    "context"
-    "encoding/json"
-    "github.com/segmentio/kafka-go"
-)
-
 type Worker struct {
     reader      *kafka.Reader
     tenantPool  *TenantConnectionPool
     batchSize   int
     flushPeriod time.Duration
-}
-
-func NewWorker(cfg Config) *Worker {
-    reader := kafka.NewReader(kafka.ReaderConfig{
-        Brokers:  cfg.KafkaBrokers,
-        GroupID:  "clamo-ingest",
-        Topic:    "cej.case.ready",
-        MinBytes: 10e3, // 10KB
-        MaxBytes: 10e6, // 10MB
-    })
-    
-    return &Worker{
-        reader:      reader,
-        tenantPool:  NewTenantConnectionPool(cfg),
-        batchSize:   1000,
-        flushPeriod: 5 * time.Second,
-    }
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -132,7 +124,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 ```go
 func (w *Worker) flush(events []CaseReadyEvent) error {
-    // Agrupar por tenant
+    // Group by tenant
     byTenant := make(map[string][]Case)
     for _, event := range events {
         byTenant[event.CompanyID] = append(
@@ -141,11 +133,11 @@ func (w *Worker) flush(events []CaseReadyEvent) error {
         )
     }
     
-    // Insertar por tenant en paralelo
+    // Insert per tenant in parallel
     g, ctx := errgroup.WithContext(context.Background())
     
     for companyID, cases := range byTenant {
-        companyID, cases := companyID, cases // capture
+        companyID, cases := companyID, cases
         g.Go(func() error {
             return w.insertCases(ctx, companyID, cases)
         })
@@ -153,87 +145,14 @@ func (w *Worker) flush(events []CaseReadyEvent) error {
     
     return g.Wait()
 }
-
-func (w *Worker) insertCases(ctx context.Context, companyID string, cases []Case) error {
-    conn, err := w.tenantPool.Get(companyID)
-    if err != nil {
-        return fmt.Errorf("get connection: %w", err)
-    }
-    defer w.tenantPool.Put(companyID, conn)
-    
-    // Usar COPY para inserción masiva
-    _, err = conn.CopyFrom(
-        ctx,
-        pgx.Identifier{"cases"},
-        []string{
-            "id", "expediente", "plaintiff", "defendant",
-            "subject_matter", "risk_level", "claim_amount",
-            "district", "court", "current_judge", "process_type",
-            "filing_date", "status", "stage_code", "substage_code",
-            "monitored_entity_id", "created_at", "updated_at",
-        },
-        pgx.CopyFromSlice(len(cases), func(i int) ([]any, error) {
-            c := cases[i]
-            return []any{
-                c.ID, c.Expediente, c.Plaintiff, c.Defendant,
-                c.SubjectMatter, c.RiskLevel, c.ClaimAmount,
-                c.District, c.Court, c.CurrentJudge, c.ProcessType,
-                c.FilingDate, c.Status, c.StageCode, c.SubstageCode,
-                c.MonitoredEntityID, time.Now(), time.Now(),
-            }, nil
-        }),
-    )
-    
-    if err != nil {
-        return fmt.Errorf("copy from: %w", err)
-    }
-    
-    // Insertar movimientos
-    return w.insertMovements(ctx, conn, cases)
-}
 ```
 
-### Upsert Logic
-
-```go
-func (w *Worker) upsertCase(ctx context.Context, conn *pgxpool.Conn, c Case) error {
-    _, err := conn.Exec(ctx, `
-        INSERT INTO cases (
-            id, expediente, plaintiff, defendant, subject_matter,
-            risk_level, claim_amount, district, court, current_judge,
-            process_type, filing_date, status, stage_code, substage_code,
-            monitored_entity_id, created_at, updated_at
-        ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-            $11, $12, $13, $14, $15, $16, $17, $18
-        )
-        ON CONFLICT (expediente) DO UPDATE SET
-            plaintiff = EXCLUDED.plaintiff,
-            defendant = EXCLUDED.defendant,
-            risk_level = EXCLUDED.risk_level,
-            claim_amount = EXCLUDED.claim_amount,
-            current_judge = EXCLUDED.current_judge,
-            status = EXCLUDED.status,
-            stage_code = EXCLUDED.stage_code,
-            substage_code = EXCLUDED.substage_code,
-            updated_at = EXCLUDED.updated_at
-    `,
-        c.ID, c.Expediente, c.Plaintiff, c.Defendant, c.SubjectMatter,
-        c.RiskLevel, c.ClaimAmount, c.District, c.Court, c.CurrentJudge,
-        c.ProcessType, c.FilingDate, c.Status, c.StageCode, c.SubstageCode,
-        c.MonitoredEntityID, time.Now(), time.Now(),
-    )
-    return err
-}
-```
-
-## Pool de Conexiones por Tenant
+### Tenant Connection Pool
 
 ```go
 type TenantConnectionPool struct {
-    controlDB   *pgxpool.Pool
-    connections sync.Map // map[string]*pgxpool.Pool
-    vault       *VaultClient
+    tenantClient *TenantSDKClient
+    connections  sync.Map // map[string]*pgxpool.Pool
 }
 
 func (p *TenantConnectionPool) Get(companyID string) (*pgxpool.Pool, error) {
@@ -242,8 +161,8 @@ func (p *TenantConnectionPool) Get(companyID string) (*pgxpool.Pool, error) {
         return conn.(*pgxpool.Pool), nil
     }
     
-    // Get connection string from vault
-    connStr, err := p.resolveConnectionString(companyID)
+    // Get connection string from Tenant SDK
+    connStr, err := p.tenantClient.GetDatabaseConnection(companyID)
     if err != nil {
         return nil, err
     }
@@ -257,7 +176,6 @@ func (p *TenantConnectionPool) Get(companyID string) (*pgxpool.Pool, error) {
     config.MaxConns = 10
     config.MinConns = 2
     config.MaxConnLifetime = 30 * time.Minute
-    config.MaxConnIdleTime = 5 * time.Minute
     
     pool, err := pgxpool.NewWithConfig(context.Background(), config)
     if err != nil {
@@ -267,28 +185,43 @@ func (p *TenantConnectionPool) Get(companyID string) (*pgxpool.Pool, error) {
     p.connections.Store(companyID, pool)
     return pool, nil
 }
+```
 
-func (p *TenantConnectionPool) resolveConnectionString(companyID string) (string, error) {
-    // Get secret ID from control DB
-    var secretID string
-    err := p.controlDB.QueryRow(context.Background(), `
-        SELECT pooled_conn_secret_id
-        FROM company_databases
-        WHERE company_id = $1 AND status = 'active'
-    `, companyID).Scan(&secretID)
+## Respecting Trusted Sources
+
+The worker respects the source hierarchy when inserting:
+
+```go
+func (w *Worker) upsertCase(ctx context.Context, conn *pgxpool.Conn, c Case) error {
+    // Only update CEJ fields, preserve manual
+    _, err := conn.Exec(ctx, `
+        INSERT INTO cases (
+            id, case_number, company_id,
+            subject_matter, process_type, stage,
+            cej_judicial_district, court, judge,
+            created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (case_number, company_id) DO UPDATE SET
+            -- Only update SourcedValue.cej, preserve ai and manual
+            subject_matter = jsonb_set(
+                COALESCE(cases.subject_matter, '{}'),
+                '{cej}',
+                EXCLUDED.subject_matter->'cej'
+            ),
+            -- Direct CEJ fields are overwritten
+            cej_judicial_district = EXCLUDED.cej_judicial_district,
+            court = EXCLUDED.court,
+            judge = EXCLUDED.judge,
+            updated_at = EXCLUDED.updated_at
+    `, c.ID, c.CaseNumber, c.CompanyID, /* ... */)
     
-    if err != nil {
-        return "", err
-    }
-    
-    // Get secret from Vault
-    return p.vault.GetSecret(secretID)
+    return err
 }
 ```
 
-## Configuración
+## Configuration
 
-### Variables de Entorno
+### Environment Variables
 
 ```bash
 # Kafka
@@ -296,12 +229,8 @@ KAFKA_BROKERS=localhost:9092
 KAFKA_TOPIC=cej.case.ready
 KAFKA_GROUP_ID=clamo-ingest
 
-# Control Database
-CONTROL_DATABASE_URL=postgresql://...
-
-# Vault
-SUPABASE_URL=https://...
-SUPABASE_SERVICE_KEY=...
+# Tenant SDK
+TENANT_SERVICE_URL=http://localhost:4001
 
 # Worker
 BATCH_SIZE=1000
@@ -327,7 +256,7 @@ COPY --from=builder /ingest /ingest
 CMD ["/ingest"]
 ```
 
-## Métricas
+## Metrics
 
 ```go
 var (
@@ -336,14 +265,14 @@ var (
             Name: "ingest_messages_processed_total",
             Help: "Total messages processed",
         },
-        []string{"status"},
+        []string{"status", "company_id"},
     )
     
     batchSize = promauto.NewHistogram(
         prometheus.HistogramOpts{
             Name:    "ingest_batch_size",
             Help:    "Size of processed batches",
-            Buckets: []float64{10, 50, 100, 500, 1000, 5000},
+            Buckets: []float64{10, 50, 100, 500, 1000},
         },
     )
     
@@ -358,41 +287,13 @@ var (
 )
 ```
 
-## Health Check
-
-```go
-func (w *Worker) HealthHandler(c *gin.Context) {
-    health := map[string]string{
-        "status": "healthy",
-        "kafka":  "connected",
-    }
-    
-    // Check Kafka
-    if err := w.reader.Stats().Lag; err > 10000 {
-        health["status"] = "degraded"
-        health["kafka_lag"] = fmt.Sprintf("%d", err)
-    }
-    
-    // Check connections
-    w.tenantPool.connections.Range(func(key, value any) bool {
-        pool := value.(*pgxpool.Pool)
-        if pool.Stat().TotalConns() == 0 {
-            health["status"] = "degraded"
-        }
-        return true
-    })
-    
-    c.JSON(http.StatusOK, health)
-}
-```
-
-## Desarrollo Local
+## Local Development
 
 ```bash
-# Compilar
+# Build
 go build -o bin/ingest ./cmd/worker
 
-# Ejecutar
+# Run
 ./bin/ingest
 
 # Tests
@@ -402,3 +303,21 @@ go test ./...
 go test -bench=. ./...
 ```
 
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="clamo-cej-connector"
+    icon="plug"
+    href="/en/services/clamo-cej-connector"
+  >
+    Service that produces events to Kafka.
+  </Card>
+  <Card
+    title="Data Model"
+    icon="database"
+    href="/en/architecture/data-model"
+  >
+    SourcedValue pattern and source hierarchy.
+  </Card>
+</CardGroup>

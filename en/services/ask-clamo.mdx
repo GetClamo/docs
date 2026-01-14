@@ -1,77 +1,157 @@
 ---
-title: ask-clamo
-description: Unified AI assistants with LangGraph for case queries and analytics
+title: ask-clamo (luna)
+description: Unified AI Assistant with LangGraph - Javi, Clamy, and Luna as profiles
 ---
 
-# ask-clamo
+# ask-clamo (luna)
 
-Unified AI Assistant for Clamo - consolidates Javi (Case Assistant), Clamy (Analytics Assistant), and Luna (Global Assistant) into a single LangGraph Platform deployment.
+Unified AI Assistant for Clamo. The source code is in the **luna** repository and the deployed service is called **ask-clamo**. It contains three **profiles** (Javi, Clamy, Luna) that share the same LangGraph Platform deployment with tool isolation.
+
+<Note>
+**Unified Architecture:** Javi, Clamy, and Luna are **no longer separate services**. They are profiles (tool profiles) within a single service. The frontend selects the active profile by sending `assistant_name` in the request.
+</Note>
 
 ## General Information
 
 | Property | Value |
 |----------|-------|
-| **Repository** | `GetClamo/ask-clamo` |
-| **Language** | Python 3.11 |
-| **Framework** | LangGraph |
+| **Repository** | `GetClamo/luna` |
+| **Deployed Service** | `ask-clamo` |
+| **Language** | Python 3.13 |
+| **Framework** | LangGraph Platform |
 | **LLM** | Anthropic Claude |
-| **Port** | 8123 |
+| **Port** | 8000 |
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph WebApp [clamo-web-app]
+        Chat[Chat Widget]
+    end
+    
+    subgraph Luna [luna / ask-clamo Service]
+        Router[Middleware Router]
+        subgraph Profiles [Profiles]
+            Javi[Javi<br/>tool_profile=JAVI]
+            Clamy[Clamy<br/>tool_profile=CLAMY]
+            LunaP[Luna<br/>tool_profile=LUNA]
+        end
+        ToolGuard[Tool Guard]
+    end
+    
+    subgraph Tools [Tools]
+        ClamoTools[clamo-tools<br/>Olive]
+        MCP[Tinybird MCP]
+    end
+    
+    Chat -->|assistant_name| Router
+    Router --> Javi
+    Router --> Clamy
+    Router --> LunaP
+    Javi --> ToolGuard
+    Clamy --> ToolGuard
+    LunaP --> ToolGuard
+    ToolGuard --> ClamoTools
+    ToolGuard --> MCP
+```
 
 ## Key Features
 
-- **Single Deployment**: One graph, three assistants
+- **Single Deployment**: One LangGraph graph, three profiles
 - **Shared Threads**: Javi, Clamy, and Luna can run on the same thread, sharing message history
-- **Tool Isolation**: Each assistant only sees their designated tools (middleware + guard)
-- **Dynamic Prompts**: System prompts are selected based on assistant_name in context
-- **MCP Integration**: Clamy loads Tinybird analytics tools via MCP
+- **Tool Isolation**: Each profile only sees its designated tools (middleware + guard)
+- **Dynamic Prompts**: System prompts are selected based on `assistant_name` in context
+- **MCP Integration**: Clamy loads analytics tools from Tinybird via MCP
+- **Olive Integration**: Luna accesses remote tools via clamo-tools
 
-## Assistants
+## Profiles
 
 ### Javi (Case Assistant)
 
 - **Purpose**: Help users understand individual legal cases (page-scoped)
 - **Tools**: `get_case_details`, `get_case_progress`, `get_case_movements`, `get_case_milestones`
-- **Context Required**: `case_id`, `company_id`, `access_token`
+- **Required Context**: `case_id`, `company_id` (auto-injected from page context)
 - **Use Case**: Embedded in case detail pages
 
 ### Clamy (Analytics Assistant)
 
-- **Purpose**: Generate charts and visualizations for legal portfolio analytics
-- **Tools**: `show_chart`, `show_kpi`, `show_custom_chart`, `get_chart_template`, plus MCP Tinybird tools
-- **Context Required**: `company_id` (case_id optional)
+- **Purpose**: Generate charts and visualizations for legal portfolio analysis
+- **Tools**: `show_chart`, `show_kpi`, `show_custom_chart`, `get_chart_template`, plus Tinybird MCP tools
+- **Required Context**: `company_id` (case_id optional)
 - **Use Case**: Embedded in analytics/dashboard pages
 
 ### Luna (Global Assistant)
 
 - **Purpose**: Generalist assistant with access to ALL cases (not page-scoped)
-- **Tools**: `get_case_details_by_id`, `get_case_progress_by_id`, `get_case_movements_by_id`, `get_case_milestones_by_id`, `search_cases`, `list_cases`, plus chart tools
-- **Context Required**: `company_id`, `access_token` (case_id NOT required - passed as tool argument)
+- **Tools**: `get_case_details_by_id`, `get_case_progress_by_id`, `search_cases`, `list_cases`, plus chart tools
+- **Required Context**: `company_id` (case_id passed as tool argument)
 - **Use Case**: Global chat widget, cross-case queries, portfolio overview
+
+## Profile Selection
+
+The frontend selects the active profile by sending `assistant_name` in the request:
+
+```bash
+curl -X POST http://localhost:8000/runs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assistant_id": "luna",
+    "thread_id": "thread_abc123",
+    "input": {"messages": [{"role": "user", "content": "..."}]},
+    "config": {
+      "configurable": {
+        "assistant_name": "javi",
+        "case_id": "case_xyz789",
+        "company_id": "cmp_abc123"
+      }
+    }
+  }'
+```
+
+| Page | `assistant_name` | Additional Context |
+|------|------------------|-------------------|
+| Case detail | `javi` | `case_id` |
+| Analytics | `clamy` | - |
+| Global chat | `luna` | - |
 
 ## Configuration
 
 ### Environment Variables
 
 ```bash
-# Anthropic
+# LLM
 ANTHROPIC_API_KEY=sk-ant-...
 
-# APIs
-CLAMO_CASES_URL=http://localhost:4000
-TINYBIRD_TOKEN=perJ-...
+# Backend APIs
+CASES_SERVICE_URL=http://localhost:4000
+TENANT_SERVICE_URL=http://localhost:8001
+CLAMO_TOOLS_URL=http://localhost:8080  # REQUIRED
 
-# Server
-PORT=8123
+# Tinybird MCP
+TINYBIRD_TOKEN=p.eyJ...
+TINYBIRD_API_URL=https://api.tinybird.co
+
+# LangSmith (Tracing)
+LANGCHAIN_API_KEY=ls__...
+LANGCHAIN_TRACING_V2=true
 ```
 
 ## Local Development
 
 ```bash
+# Navigate to repo
+cd luna
+
 # Install dependencies
 uv sync
 
-# Run server
-uv run langgraph dev
+# Run server (port 8000)
+uv run langgraph dev --port 8000
+
+# In another terminal, run clamo-tools
+cd clamo-tools
+uv run uvicorn clamo_tools.app:app --port 8080 --reload
 
 # Tests
 uv run pytest
@@ -81,17 +161,17 @@ uv run pytest
 
 <CardGroup cols={2}>
   <Card
-    title="Architecture"
+    title="Detailed Architecture"
     icon="sitemap"
     href="/en/architecture/ai-assistants"
   >
-    Detailed AI assistants architecture.
+    Complete AI assistants architecture.
   </Card>
   <Card
-    title="Service Catalog"
-    icon="server"
-    href="/en/services/catalog"
+    title="clamo-tools"
+    icon="wrench"
+    href="/en/services/clamo-tools"
   >
-    Overview of all Clamo services.
+    Olive tools server.
   </Card>
 </CardGroup>

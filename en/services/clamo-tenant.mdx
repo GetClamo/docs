@@ -1,92 +1,155 @@
 ---
 title: clamo-tenant
-description: Servicio de gestión de empresas, usuarios y configuración multi-tenant
+description: Company, user management and multi-tenant provisioning service
 ---
 
 # clamo-tenant
 
-Servicio central para la gestión de tenants (empresas), usuarios, onboarding y configuración del sistema multi-tenant.
+Central service for tenant (company) management, users, onboarding, and database provisioning. Acts as the **source of truth** for tenant connection resolution.
 
-## Información General
+## General Information
 
-| Propiedad | Valor |
-|-----------|-------|
-| **Repositorio** | `GetClamo/clamo-tenant` |
-| **Lenguaje** | TypeScript |
+| Property | Value |
+|----------|-------|
+| **Repository** | `GetClamo/clamo-tenant` |
+| **Language** | TypeScript |
 | **Framework** | Hono |
-| **Puerto** | 4001 |
-| **Base de Datos** | Neon PostgreSQL (via Prisma) |
+| **Port** | 4001 |
+| **Database** | Supabase PostgreSQL (Control Plane) |
+| **ORM** | Prisma (`@getclamo/database`) |
 
-## Responsabilidades
+## Responsibilities
 
-- Gestión del ciclo de vida de empresas (crear, actualizar, eliminar)
-- Provisioning de bases de datos por tenant en Neon
-- Integración con WorkOS para autenticación y organizaciones
-- Gestión de usuarios y roles
-- Flujo de onboarding para nuevas empresas
-- Almacenamiento de credenciales en Supabase Vault
+- Company lifecycle management (create, update, delete)
+- **Database provisioning** per tenant in Neon
+- Integration with **WorkOS** for authentication and organizations
+- User and role management
+- Onboarding flow for new companies
+- Credential storage in **Supabase Vault**
+- **Source of truth** for tenant connection resolution
 
-## Arquitectura
+## RRS Architecture
 
 ```mermaid
 flowchart TB
-    subgraph API [API Layer]
-        Routes[Routes]
-        Controllers[Controllers]
-        Middleware[Auth Middleware]
+    subgraph Routes [Route Layer]
+        MeRoute[me.ts]
+        CompaniesRoute[companies.ts]
+        AdminRoute[admin.ts]
+        InternalRoute[internal.ts]
     end
     
-    subgraph Domain [Domain Layer]
-        CompanyService[CompanyService]
-        UserService[UserService]
-        ProvisioningService[ProvisioningService]
-        DeletionService[DeletionService]
+    subgraph Services [Service Layer]
+        UserService[user.service.ts]
+        CompanyService[company.service.ts]
+        ProvisioningService[provisioning.service.ts]
+        InternalService[internal.service.ts]
     end
     
-    subgraph Infrastructure [Infrastructure]
-        Prisma[Prisma Client]
-        WorkOS[WorkOS Client]
-        Neon[Neon Client]
-        Vault[Vault Client]
-        Kafka[Kafka Adapter]
+    subgraph Repositories [Repository Layer]
+        UserRepo[user.repository.ts]
+        CompanyRepo[company.repository.ts]
     end
     
-    Routes --> Controllers
-    Controllers --> Middleware
-    Controllers --> CompanyService
-    Controllers --> UserService
+    subgraph Clients [External Clients]
+        WorkOS[workos.client.ts]
+        Neon[neon.client.ts]
+        Vault[vault.client.ts]
+    end
+    
+    MeRoute --> UserService
+    CompaniesRoute --> CompanyService
+    AdminRoute --> CompanyService
+    InternalRoute --> InternalService
+    
     CompanyService --> ProvisioningService
-    CompanyService --> DeletionService
     ProvisioningService --> Neon
     ProvisioningService --> Vault
     ProvisioningService --> WorkOS
-    CompanyService --> Prisma
-    UserService --> Prisma
-    UserService --> WorkOS
+    
+    UserService --> UserRepo
+    CompanyService --> CompanyRepo
 ```
 
-## Endpoints Principales
+## Directory Structure
 
-### Usuarios
+```
+clamo-tenant/src/
+├── routes/
+│   ├── me.ts              # /v1/me - Current user
+│   ├── companies.ts       # /v1/companies
+│   ├── admin.ts           # /v1/admin/... - Admin operations
+│   ├── internal.ts        # /internal/v1/... - Service-to-service
+│   └── reference-data.ts  # Reference data
+├── services/
+│   ├── user.service.ts
+│   ├── company.service.ts
+│   ├── provisioning.service.ts  # Creates Neon branches
+│   └── internal.service.ts      # Connection resolution
+├── repositories/
+│   ├── user.repository.ts
+│   └── company.repository.ts
+├── clients/
+│   ├── workos.client.ts   # WorkOS SDK
+│   ├── neon.client.ts     # Neon API
+│   └── vault.client.ts    # Supabase Vault
+├── middleware/
+│   └── auth.ts            # Parses x-workos-* headers
+└── events/
+    └── kafka.adapter.ts   # Provisioning events
+```
 
-| Método | Endpoint | Descripción |
+## Authentication
+
+The service uses `x-workos-*` headers injected by Kong:
+
+```typescript
+// middleware/auth.ts
+const userId = headers.get("x-workos-user-id");
+const orgId = headers.get("x-workos-org-id");
+const role = headers.get("x-workos-role") ?? "member";
+const permissionsHeader = headers.get("x-workos-permissions");
+```
+
+## Main Endpoints
+
+### Current User
+
+| Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/v1/me` | Obtener usuario actual |
-| GET | `/v1/me/company` | Obtener empresa del usuario |
-| PATCH | `/v1/me/onboarding` | Completar onboarding |
+| GET | `/v1/me` | Get current user |
+| GET | `/v1/me/company` | Get user's company |
+| PATCH | `/v1/me/onboarding` | Complete onboarding |
 
-### Empresas (Admin)
+### Companies
 
-| Método | Endpoint | Descripción |
+| Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/v1/admin/companies` | Crear empresa |
-| GET | `/v1/admin/companies` | Listar empresas |
-| GET | `/v1/admin/companies/:id` | Obtener empresa |
-| PATCH | `/v1/admin/companies/:id` | Actualizar empresa |
-| DELETE | `/v1/admin/companies/:id` | Eliminar empresa |
-| POST | `/v1/admin/companies/:id/invite` | Invitar usuario |
+| GET | `/v1/companies/:id` | Get company |
+| PATCH | `/v1/companies/:id` | Update company |
 
-## Flujo de Creación de Empresa
+### Admin
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/v1/admin/companies` | Create company |
+| GET | `/v1/admin/companies` | List companies |
+| DELETE | `/v1/admin/companies/:id` | Delete company |
+| POST | `/v1/admin/companies/:id/invite` | Invite user |
+
+### Internal Endpoints
+
+<Warning>
+**Service-to-service only.** These endpoints are the source of truth for connection resolution.
+</Warning>
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/internal/v1/companies/:id` | Get company (internal) |
+| GET | `/internal/v1/companies/:id/database` | Get DB connection |
+| GET | `/internal/v1/companies/by-org/:orgId` | Find by WorkOS org |
+
+## Provisioning Flow
 
 ```mermaid
 sequenceDiagram
@@ -100,16 +163,24 @@ sequenceDiagram
     Admin->>API: POST /v1/admin/companies
     API->>WorkOS: Create Organization
     WorkOS-->>API: org_id
+    
+    API->>DB: Insert Company (status: provisioning)
+    
     API->>Neon: Create Branch
     Neon-->>API: branch_id, connection_uri
-    API->>Vault: Store credentials
+    
+    API->>Vault: Store pooled_conn_secret
+    API->>Vault: Store direct_conn_secret
     Vault-->>API: secret_ids
-    API->>DB: Insert Company + CompanyDatabase
+    
+    API->>DB: Insert CompanyDatabase
+    API->>DB: Update Company (status: ready)
+    
     API->>WorkOS: Send Invitation
     API-->>Admin: Company created
 ```
 
-## Modelo de Datos
+## Data Model
 
 ### Company
 
@@ -130,6 +201,24 @@ interface Company {
 }
 ```
 
+### CompanyDatabase
+
+```typescript
+interface CompanyDatabase {
+  id: string;
+  companyId: string;
+  neonProjectId: string;
+  neonBranchId: string;
+  neonEndpointId: string | null;
+  databaseName: string;
+  databaseHost: string;
+  databaseUser: string;
+  pooledConnSecretId: string;  // ID in Supabase Vault
+  directConnSecretId: string;  // ID in Supabase Vault
+  status: 'active' | 'suspended' | 'deleted';
+}
+```
+
 ### User
 
 ```typescript
@@ -146,31 +235,32 @@ interface User {
 }
 ```
 
-### CompanyDatabase
+## Connection Resolution
+
+The service exposes internal endpoints for other services to resolve connections:
 
 ```typescript
-interface CompanyDatabase {
-  id: string;
-  companyId: string;
-  neonProjectId: string;
-  neonBranchId: string;
-  neonEndpointId: string | null;
-  databaseName: string;
-  databaseHost: string;
-  databaseUser: string;
-  pooledConnSecretId: string;
-  directConnSecretId: string;
-  status: 'active' | 'suspended' | 'deleted';
-}
+// From clamo-cases using the SDK
+import Tenant from "@getclamo/tenant";
+
+const tenant = new Tenant({ baseURL: env.TENANT_SERVICE_URL });
+
+// Get database connection
+const { connectionString } = await tenant.internal
+  .companies(companyId)
+  .database.get();
 ```
 
-## Configuración
+## Configuration
 
-### Variables de Entorno
+### Environment Variables
 
 ```bash
-# Base de datos de control
-CONTROL_DATABASE_URL=postgresql://user:pass@host:5432/control
+# Server
+PORT=4001
+
+# Control database
+CONTROL_DATABASE_URL=postgresql://...
 
 # WorkOS
 WORKOS_API_KEY=sk_...
@@ -180,88 +270,48 @@ WORKOS_CLIENT_ID=client_...
 NEON_API_KEY=...
 NEON_PROJECT_ID=...
 
-# Supabase (para Vault)
+# Supabase (for Vault)
 SUPABASE_URL=https://...
 SUPABASE_SERVICE_KEY=...
 
-# Kafka (opcional)
+# Kafka (provisioning events)
 KAFKA_BROKERS=localhost:9092
 ```
 
-## Ejemplos de Uso
+## SDK
 
-### Obtener Usuario Actual
-
-```bash
-curl -X GET http://localhost:4001/v1/me \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "x-clamo-session: $SESSION"
-```
-
-Respuesta:
-
-```json
-{
-  "id": "usr_abc123",
-  "email": "usuario@empresa.com",
-  "firstName": "Juan",
-  "lastName": "Pérez",
-  "role": "admin",
-  "onboardingState": "completed",
-  "companyId": "cmp_xyz789"
-}
-```
-
-### Crear Empresa (Admin)
+This service publishes a TypeScript SDK:
 
 ```bash
-curl -X POST http://localhost:4001/v1/admin/companies \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Mi Empresa S.A.C.",
-    "ruc": "20123456789",
-    "ownerEmail": "admin@miempresa.com",
-    "plan": "pro"
-  }'
+pnpm add @getclamo/tenant
 ```
 
-Respuesta:
+```typescript
+import Tenant from "@getclamo/tenant";
 
-```json
-{
-  "id": "cmp_new123",
-  "workosOrgId": "org_workos456",
-  "name": "Mi Empresa S.A.C.",
-  "ruc": "20123456789",
-  "databaseStatus": "ready",
-  "invitationId": "inv_abc",
-  "message": "Empresa creada y base de datos aprovisionada. Invitación enviada al administrador."
-}
+const tenant = new Tenant({ baseURL: process.env.TENANT_SERVICE_URL });
+
+// Get current user
+const user = await tenant.me.get();
+
+// Get user's company
+const company = await tenant.me.company();
+
+// Internal endpoints (service-to-service)
+const companyData = await tenant.internal.companies(companyId).get();
+const dbConnection = await tenant.internal.companies(companyId).database.get();
 ```
 
-### Invitar Usuario
+## Local Development
 
 ```bash
-curl -X POST http://localhost:4001/v1/admin/companies/cmp_xyz789/invite \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "nuevo@empresa.com",
-    "role": "member"
-  }'
-```
-
-## Desarrollo Local
-
-```bash
-# Instalar dependencias
+# Install dependencies
 pnpm install
 
-# Generar cliente Prisma
+# Generate Prisma client
 pnpm db:generate
 
-# Ejecutar en modo desarrollo
+# Run in development mode
 pnpm dev
 
 # Build
@@ -271,26 +321,21 @@ pnpm build
 pnpm test
 ```
 
-## Dependencias Clave
+## Next Steps
 
-| Paquete | Uso |
-|---------|-----|
-| `@workos-inc/node` | SDK de WorkOS |
-| `@prisma/client` | ORM |
-| `@getclamo/database` | Esquemas compartidos |
-| `hono` | Framework HTTP |
-| `kafkajs` | Mensajería |
-
-
-## SDK
-
-This service publishes a TypeScript SDK for consumption by other services:
-
-\\\ash
-pnpm add @getclamo/tenant-sdk
-\\\
-
-\\\	ypescript
-import { TenantClient } from " @getclamo/tenant-sdk\;
-
-const
+<CardGroup cols={2}>
+  <Card
+    title="Service SDKs"
+    icon="plug"
+    href="/en/architecture/service-sdks"
+  >
+    Service-to-service communication.
+  </Card>
+  <Card
+    title="Security"
+    icon="shield"
+    href="/en/architecture/security"
+  >
+    Chain of trust and Vault.
+  </Card>
+</CardGroup>

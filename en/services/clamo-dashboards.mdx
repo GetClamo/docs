@@ -1,22 +1,23 @@
 ---
 title: clamo-dashboards
-description: API de dashboards personalizables en Rust con Axum
+description: Customizable dashboards API in Rust with Axum
 ---
 
 # clamo-dashboards
 
-API en Rust para gestión de dashboards personalizables y widgets de analytics.
+Rust API for managing customizable dashboards and analytics widgets. Consumes data from **Tinybird** for real-time visualizations.
 
-## Información General
+## General Information
 
-| Propiedad | Valor |
-|-----------|-------|
-| **Repositorio** | `GetClamo/clamo-dashboards` |
-| **Lenguaje** | Rust |
+| Property | Value |
+|----------|-------|
+| **Repository** | `GetClamo/clamo-dashboards` |
+| **Language** | Rust |
 | **Framework** | Axum |
-| **Puerto** | 8020 |
+| **Port** | 8020 |
+| **Data Source** | Tinybird |
 
-## Arquitectura
+## Architecture
 
 ```mermaid
 flowchart TB
@@ -26,27 +27,27 @@ flowchart TB
     end
     
     subgraph API [clamo-dashboards]
-        Routes[Routes]
+        Routes[Axum Routes]
         DashboardService[Dashboard Service]
         WidgetService[Widget Service]
-        DataFetcher[Data Fetcher]
+        TinybirdClient[Tinybird Client]
     end
     
-    subgraph Data [Datos]
-        ControlDB[(Control DB)]
-        Tinybird[(Tinybird)]
+    subgraph Data [Data]
+        TenantDB[(Tenant DB<br/>Dashboard config)]
+        Tinybird[(Tinybird<br/>Analytics data)]
     end
     
     DashboardUI --> Routes
     WidgetRenderer --> Routes
     Routes --> DashboardService
     Routes --> WidgetService
-    DashboardService --> ControlDB
-    WidgetService --> DataFetcher
-    DataFetcher --> Tinybird
+    DashboardService --> TenantDB
+    WidgetService --> TinybirdClient
+    TinybirdClient --> Tinybird
 ```
 
-## Modelo de Datos
+## Data Model
 
 ### Dashboard
 
@@ -57,67 +58,49 @@ pub struct Dashboard {
     pub company_id: String,
     pub name: String,
     pub description: Option<String>,
-    pub layout: DashboardLayout,
+    pub config: DashboardConfig,
     pub is_default: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DashboardLayout {
-    pub columns: u8,
-    pub rows: Vec<LayoutRow>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LayoutRow {
-    pub widgets: Vec<WidgetPlacement>,
+pub struct DashboardConfig {
+    pub layout: Vec<WidgetPlacement>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WidgetPlacement {
-    pub widget_id: String,
+    pub widget_type: WidgetType,
+    pub title: String,
+    pub data_source: String,  // Tinybird pipe name
+    pub filters: HashMap<String, String>,
     pub col_span: u8,
     pub row_span: u8,
 }
 ```
 
-### Widget
+### Widget Types
 
 ```rust
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Widget {
-    pub id: String,
-    pub company_id: String,
-    pub widget_type: WidgetType,
-    pub title: String,
-    pub config: WidgetConfig,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum WidgetType {
-    Counter,
-    Chart,
-    Table,
-    List,
-    Map,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WidgetConfig {
-    pub data_source: String,  // Tinybird pipe name
-    pub filters: HashMap<String, String>,
-    pub visualization: VisualizationConfig,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct VisualizationConfig {
-    pub chart_type: Option<String>,  // line, bar, pie, etc.
-    pub x_axis: Option<String>,
-    pub y_axis: Option<String>,
-    pub colors: Option<Vec<String>>,
+    Counter {
+        value_field: String,
+        format: String,
+    },
+    Chart {
+        chart_type: String,  // line, bar, pie
+        x_axis: String,
+        y_axis: String,
+    },
+    Table {
+        columns: Vec<String>,
+    },
+    List {
+        item_template: String,
+    },
 }
 ```
 
@@ -125,115 +108,22 @@ pub struct VisualizationConfig {
 
 ### Dashboards
 
-| Método | Endpoint | Descripción |
+| Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/dashboards` | Listar dashboards |
-| GET | `/dashboards/:id` | Obtener dashboard |
-| POST | `/dashboards` | Crear dashboard |
-| PATCH | `/dashboards/:id` | Actualizar dashboard |
-| DELETE | `/dashboards/:id` | Eliminar dashboard |
+| GET | `/dashboards` | List dashboards |
+| GET | `/dashboards/:id` | Get dashboard |
+| POST | `/dashboards` | Create dashboard |
+| PATCH | `/dashboards/:id` | Update dashboard |
+| DELETE | `/dashboards/:id` | Delete dashboard |
 
-### Widgets
+### Widget Data
 
-| Método | Endpoint | Descripción |
+| Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/widgets` | Listar widgets |
-| GET | `/widgets/:id` | Obtener widget |
-| GET | `/widgets/:id/data` | Obtener datos del widget |
-| POST | `/widgets` | Crear widget |
-| PATCH | `/widgets/:id` | Actualizar widget |
-| DELETE | `/widgets/:id` | Eliminar widget |
+| GET | `/widgets/:id/data` | Get widget data |
+| POST | `/widgets/query` | Custom query |
 
-## Implementación
-
-### Main
-
-```rust
-use axum::{
-    routing::{get, post, patch, delete},
-    Router,
-};
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() {
-    // Inicializar logging
-    tracing_subscriber::init();
-    
-    // Cargar configuración
-    let config = Config::from_env().expect("Failed to load config");
-    
-    // Crear estado compartido
-    let state = Arc::new(AppState::new(config).await.unwrap());
-    
-    // Definir rutas
-    let app = Router::new()
-        // Dashboards
-        .route("/dashboards", get(list_dashboards).post(create_dashboard))
-        .route("/dashboards/:id", get(get_dashboard).patch(update_dashboard).delete(delete_dashboard))
-        // Widgets
-        .route("/widgets", get(list_widgets).post(create_widget))
-        .route("/widgets/:id", get(get_widget).patch(update_widget).delete(delete_widget))
-        .route("/widgets/:id/data", get(get_widget_data))
-        // Health
-        .route("/health", get(health_check))
-        .with_state(state);
-    
-    // Iniciar servidor
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8020").await.unwrap();
-    tracing::info!("Server listening on :8020");
-    axum::serve(listener, app).await.unwrap();
-}
-```
-
-### Handlers
-
-```rust
-use axum::{
-    extract::{Path, State, Query},
-    Json,
-};
-
-async fn list_dashboards(
-    State(state): State<Arc<AppState>>,
-    Extension(session): Extension<Session>,
-) -> Result<Json<Vec<Dashboard>>, AppError> {
-    let dashboards = state
-        .dashboard_service
-        .list_by_company(&session.company_id)
-        .await?;
-    
-    Ok(Json(dashboards))
-}
-
-async fn get_widget_data(
-    State(state): State<Arc<AppState>>,
-    Path(widget_id): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-    Extension(session): Extension<Session>,
-) -> Result<Json<WidgetData>, AppError> {
-    // Obtener widget
-    let widget = state
-        .widget_service
-        .get(&widget_id, &session.company_id)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    
-    // Obtener datos de Tinybird
-    let data = state
-        .tinybird_client
-        .query(&widget.config.data_source, &params)
-        .await?;
-    
-    Ok(Json(WidgetData {
-        widget_id,
-        data,
-        fetched_at: Utc::now(),
-    }))
-}
-```
-
-### Tinybird Client
+## Tinybird Client
 
 ```rust
 pub struct TinybirdClient {
@@ -257,35 +147,24 @@ impl TinybirdClient {
             .send()
             .await?;
         
-        if !response.status().is_success() {
-            return Err(Error::TinybirdError(response.text().await?));
-        }
-        
         let data: TinybirdResponse = response.json().await?;
         Ok(data.data)
     }
 }
 ```
 
-## Widgets Predefinidos
+## Predefined Widgets
 
 ### Counter Widget
 
 ```json
 {
   "type": "Counter",
-  "title": "Casos Activos",
-  "config": {
-    "data_source": "cases_summary",
-    "filters": {
-      "status": "EN_TRAMITE"
-    },
-    "visualization": {
-      "value_field": "count",
-      "format": "number",
-      "color": "#3B22FF"
-    }
-  }
+  "title": "Active Cases",
+  "data_source": "cases_summary",
+  "filters": { "status": "EN_TRAMITE" },
+  "value_field": "count",
+  "format": "number"
 }
 ```
 
@@ -294,85 +173,37 @@ impl TinybirdClient {
 ```json
 {
   "type": "Chart",
-  "title": "Distribución de Riesgo",
-  "config": {
-    "data_source": "risk_distribution",
-    "visualization": {
-      "chart_type": "pie",
-      "value_field": "count",
-      "label_field": "risk_level",
-      "colors": ["#22c55e", "#eab308", "#f97316", "#ef4444"]
-    }
-  }
+  "title": "Risk Distribution",
+  "data_source": "risk_distribution",
+  "chart_type": "pie",
+  "value_field": "count",
+  "label_field": "risk_level"
 }
 ```
 
-### Timeline Widget
+## Configuration
 
-```json
-{
-  "type": "Chart",
-  "title": "Movimientos por Día",
-  "config": {
-    "data_source": "trends",
-    "filters": {
-      "start_date": "{{today - 30d}}",
-      "end_date": "{{today}}"
-    },
-    "visualization": {
-      "chart_type": "line",
-      "x_axis": "day",
-      "y_axis": "movement_count",
-      "show_moving_avg": true
-    }
-  }
-}
-```
-
-## Configuración
-
-### Variables de Entorno
+### Environment Variables
 
 ```bash
-# Database
-DATABASE_URL=postgresql://...
+# Server
+PORT=8020
 
 # Tinybird
 TINYBIRD_TOKEN=p.eyJ...
 TINYBIRD_API_URL=https://api.tinybird.co
 
-# Server
-PORT=8020
+# Database (for dashboard config)
+DATABASE_URL=postgresql://...
 ```
 
-### Cargo.toml
-
-```toml
-[package]
-name = "clamo-dashboards"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-axum = "0.7"
-tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.7", features = ["runtime-tokio", "postgres"] }
-reqwest = { version = "0.11", features = ["json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-```
-
-## Desarrollo Local
+## Local Development
 
 ```bash
-# Compilar
+# Build
 cargo build
 
-# Ejecutar
+# Run
 cargo run
 
 # Tests
@@ -382,3 +213,21 @@ cargo test
 cargo watch -x run
 ```
 
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="clamo-sync"
+    icon="sync"
+    href="/en/services/clamo-sync"
+  >
+    Data synchronization to Tinybird.
+  </Card>
+  <Card
+    title="ask-clamo"
+    icon="robot"
+    href="/en/services/ask-clamo"
+  >
+    Clamy profile for AI analytics.
+  </Card>
+</CardGroup>

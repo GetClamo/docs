@@ -1,11 +1,11 @@
 ---
 title: clamo-cej-discovery
-description: Discovery and bulk search service for CEJ court cases
+description: Bulk search and discovery service for CEJ court cases
 ---
 
 # clamo-cej-discovery
 
-Discovery and bulk search service for court cases in the CEJ (Centro de Justicia Electrónico - Electronic Justice Center). Automates case discovery by correlative numbers and extracts detailed information to store in CSV format.
+Bulk search and discovery service for court cases in the CEJ (Centro de Justicia Electrónico - Electronic Justice Center). Automates case discovery by correlative numbers and stores results in CSV format for later analysis.
 
 ## General Information
 
@@ -15,33 +15,40 @@ Discovery and bulk search service for court cases in the CEJ (Centro de Justicia
 | **Language** | Python 3.11 |
 | **Orchestration** | Temporal |
 | **Browser** | Playwright + Steel.dev |
-| **Storage** | MinIO/S3 |
-| **Database** | PostgreSQL |
+| **Storage** | MinIO/S3 (CSV) |
+
+## Difference with clamo-cej-connector
+
+| Aspect | clamo-cej-connector | clamo-cej-discovery |
+|--------|---------------------|---------------------|
+| **Purpose** | Extracts details from known cases | Discovers new cases by correlative |
+| **Input** | Specific case number | Range of correlatives (1-99999) |
+| **Output** | Kafka → Database | CSV in MinIO |
+| **Use Case** | Continuous monitoring | Initial bulk search |
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    subgraph Scheduler [Scheduling]
-        Temporal[Temporal Server]
+    subgraph Trigger [Triggers]
         API[Discovery API]
+        Temporal[Temporal Scheduler]
     end
     
     subgraph Discovery [clamo-cej-discovery]
         Worker[Temporal Worker]
         Browser[Browser Controller]
         Parser[HTML Parser]
-        Storage[CSV Storage]
+        CSVWriter[CSV Writer]
     end
     
     subgraph External [External]
-        Steel[Steel Cloud]
+        Steel[Steel.dev]
         CEJ[CEJ Website]
     end
     
     subgraph Output [Output]
         MinIO[(MinIO/S3)]
-        DB[(PostgreSQL)]
         Ably[Ably Notifications]
     end
     
@@ -51,35 +58,23 @@ flowchart TB
     Browser --> Steel
     Steel --> CEJ
     CEJ --> Parser
-    Parser --> Storage
-    Storage --> MinIO
-    Storage --> DB
+    Parser --> CSVWriter
+    CSVWriter --> MinIO
     Worker -.-> Ably
 ```
 
 ## Features
 
-- **Bulk search by correlatives**: Searches cases from 1 to 99999
-- **Local and stealth mode**: Normal Playwright for development, Steel.dev for production
+- **Search by correlatives**: Searches cases from 1 to 99999
+- **Local and stealth mode**: Playwright for development, Steel.dev for production
 - **Block processing**: Divides work into configurable blocks
 - **Smart stopping**: Automatically stops when "not found" rate is high
-- **Incremental CSV**: Progressively saves results to MinIO
-- **Ably notifications**: Real-time alerts when a case is found
-
-## Difference with clamo-cej-connector
-
-| Aspect | clamo-cej-connector | clamo-cej-discovery |
-|--------|---------------------|---------------------|
-| **Purpose** | Extracts details from known cases | Discovers new cases by correlative |
-| **Input** | Specific RUC or case number | Range of correlatives |
-| **Output** | Kafka (for ingestion) | CSV in MinIO |
-| **Use case** | Continuous case monitoring | Initial bulk search |
+- **Incremental CSV**: Progressively saves results
+- **Ably notifications**: Alerts when a case is found
 
 ## Workflows
 
 ### BulkSearchWorkflow
-
-Main workflow for bulk case search:
 
 ```python
 @workflow.defn
@@ -97,12 +92,11 @@ class BulkSearchWorkflow:
         not_found_count = 0
         
         for block in blocks:
-            # 2. Process each block
+            # 2. Process block
             block_result = await workflow.execute_activity(
                 search_correlativo_block,
                 args=[input.search_params, block],
                 start_to_close_timeout=timedelta(minutes=30),
-                retry_policy=RetryPolicy(maximum_attempts=3),
             )
             
             results.extend(block_result.cases)
@@ -120,210 +114,8 @@ class BulkSearchWorkflow:
         
         return BulkSearchResult(
             total_found=len(results),
-            csv_path=f"{input.empresa}/{input.instancia}/{input.especialidad}/{input.anio}/{input.distrito}.csv",
+            csv_path=f"{input.empresa}/{input.distrito}/{input.anio}.csv",
         )
-```
-
-## Activities
-
-### Browser Search
-
-```python
-@activity.defn
-async def search_correlativo_block(
-    params: SearchParams,
-    block: CorrelativoBlock,
-) -> BlockResult:
-    """Searches a block of correlatives in CEJ."""
-    
-    # Select browser mode
-    if params.mode == "stealth":
-        browser = await create_steel_browser()
-    else:
-        browser = await create_local_browser()
-    
-    cases = []
-    not_found = 0
-    
-    try:
-        page = await browser.new_page()
-        
-        for correlativo in range(block.start, block.end + 1):
-            # Build case number
-            expediente = f"{correlativo:05d}-{params.anio}-0-{params.distrito_code}-{params.instancia_code}-{params.especialidad_code}"
-            
-            # Search in CEJ
-            result = await search_expediente(page, expediente)
-            
-            if result.found:
-                cases.append(result.case_data)
-                # Notify if Ably is configured
-                await notify_case_found(result.case_data)
-            else:
-                not_found += 1
-                
-    finally:
-        await browser.close()
-    
-    return BlockResult(cases=cases, not_found_count=not_found)
-```
-
-### CSV Storage
-
-```python
-@activity.defn
-async def save_csv_incremental(
-    empresa: str,
-    cases: list[CaseData],
-) -> str:
-    """Saves cases to incremental CSV in MinIO."""
-    
-    # CSV format
-    # - Separator: | (pipe)
-    # - Encoding: latin9
-    # - No header
-    # - 25 columns
-    
-    csv_content = "\n".join([
-        "|".join([
-            case.expediente,
-            case.demandante,
-            case.demandado,
-            case.materia,
-            case.estado,
-            # ... 20 more columns
-        ])
-        for case in cases
-    ])
-    
-    # Upload to MinIO
-    path = f"{empresa}/{case.instancia}/{case.especialidad}/{case.anio}/{case.distrito}.csv"
-    
-    await minio_client.put_object(
-        bucket=settings.BULK_SEARCH_CSV_BUCKET,
-        key=path,
-        data=csv_content.encode("latin9"),
-        content_type="text/csv",
-    )
-    
-    return path
-```
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Steel.dev (for stealth mode)
-STEEL_API_KEY=your_steel_api_key
-
-# Database
-METADATA_DATABASE_URL=postgresql://user:pass@localhost:5432/cej_discovery
-BUSINESS_DATABASE_URL=postgresql://user:pass@localhost:5432/clamo
-
-# Temporal
-TEMPORAL_HOST=localhost:7233
-TEMPORAL_NAMESPACE=default
-
-# MinIO/S3
-ARTIFACT_STORE_S3_ENDPOINT=http://localhost:9000
-ARTIFACT_STORE_S3_ACCESS_KEY=minioadmin
-ARTIFACT_STORE_S3_SECRET_KEY=minioadmin
-BULK_SEARCH_CSV_BUCKET=cej-bulk-search
-
-# Ably (optional)
-ABLY_API_KEY=your_ably_key
-```
-
-### Docker Compose
-
-```yaml
-version: '3.8'
-services:
-  cej-discovery-api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    environment:
-      - STEEL_API_KEY=${STEEL_API_KEY}
-      - TEMPORAL_HOST=temporal:7233
-      - METADATA_DATABASE_URL=${METADATA_DATABASE_URL}
-    ports:
-      - "8080:8080"
-    depends_on:
-      - temporal
-      - minio
-
-  cej-discovery-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    environment:
-      - STEEL_API_KEY=${STEEL_API_KEY}
-      - TEMPORAL_HOST=temporal:7233
-      - ARTIFACT_STORE_S3_ENDPOINT=http://minio:9000
-    depends_on:
-      - temporal
-      - minio
-
-  temporal:
-    image: temporalio/auto-setup:latest
-    ports:
-      - "7233:7233"
-
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-```
-
-## Usage
-
-### Start Bulk Search
-
-```bash
-# Start services
-docker compose -f docker-compose.dev.yml up -d
-
-# Run bulk search
-uv run python scripts/start_bulk_search.py \
-    "TestCompany" \
-    "LIMA" \
-    "Sala Superior" \
-    "Laboral" \
-    "2025" \
-    "" \
-    "local" \
-    1 \
-    100 \
-    10
-```
-
-**Parameters:**
-
-| Parameter | Description |
-|-----------|-------------|
-| `empresa` | Company name |
-| `distrito` | Judicial district |
-| `instancia` | Instance (e.g., "Sala Superior") |
-| `especialidad` | Specialty (e.g., "Laboral") |
-| `anio` | Year |
-| `parte` | Party name (optional) |
-| `mode` | "local" or "stealth" |
-| `start` | Starting correlative |
-| `end` | Ending correlative |
-| `block_size` | Block size |
-
-### Quick Browser Test
-
-```bash
-# Test search in local mode
-uv run python scripts/test_clamo_discovery_browser.py --mode local
-
-# Test search in stealth mode
-uv run python scripts/test_clamo_discovery_browser.py --mode stealth
 ```
 
 ## CSV Structure
@@ -341,32 +133,68 @@ CSVs are stored in MinIO with the following structure:
 | Header | No header |
 | Columns | 25 |
 
-## Error Handling
+## Configuration
 
-### Common Errors
+### Environment Variables
 
-| Error | Cause | Handling |
-|-------|-------|----------|
-| `CaptchaDetected` | CEJ shows captcha | Switch to stealth mode with Steel |
-| `SessionExpired` | Browser session expired | Create new session |
-| `RateLimited` | Too many requests | Exponential backoff |
-| `HighNotFoundRate` | Many empty correlatives | Automatic stopping |
+```bash
+# Steel.dev (stealth mode)
+STEEL_API_KEY=...
 
-### Smart Stopping
+# Temporal
+TEMPORAL_HOST=localhost:7233
+TEMPORAL_NAMESPACE=default
+
+# MinIO/S3
+ARTIFACT_STORE_S3_ENDPOINT=http://localhost:9000
+ARTIFACT_STORE_S3_ACCESS_KEY=minioadmin
+ARTIFACT_STORE_S3_SECRET_KEY=minioadmin
+BULK_SEARCH_CSV_BUCKET=cej-bulk-search
+
+# Ably (notifications)
+ABLY_API_KEY=...
+```
+
+## Usage
+
+### Start Bulk Search
+
+```bash
+# Start services
+docker compose -f docker-compose.dev.yml up -d
+
+# Run search
+uv run python scripts/start_bulk_search.py \
+    "TestCompany" \
+    "LIMA" \
+    "Sala Superior" \
+    "Laboral" \
+    "2025" \
+    "" \
+    "local" \
+    1 \
+    100 \
+    10
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `empresa` | Company name |
+| `distrito` | Judicial district |
+| `instancia` | Instance (e.g., "Sala Superior") |
+| `especialidad` | Specialty (e.g., "Laboral") |
+| `anio` | Year |
+| `parte` | Party name (optional) |
+| `mode` | "local" or "stealth" |
+| `start` | Starting correlative |
+| `end` | Ending correlative |
+| `block_size` | Block size |
+
+## Smart Stopping
 
 The workflow automatically stops when:
 - The "not found" rate exceeds 95% in the last 100 correlatives
-- The consecutive error limit is reached (configurable)
-
-## Metrics
-
-| Metric | Description |
-|--------|-------------|
-| `cej_discovery_searches_total` | Total searches performed |
-| `cej_discovery_cases_found` | Cases found |
-| `cej_discovery_not_found` | Correlatives with no results |
-| `cej_discovery_block_duration_seconds` | Duration per block |
-| `cej_discovery_errors_total` | Errors by type |
+- The consecutive error limit is reached
 
 ## Local Development
 
@@ -377,25 +205,29 @@ uv sync
 # Install Playwright
 uv run playwright install chromium
 
-# Configure environment variables
-cp .env.example .env
-
 # Run tests
 make test-browser
 make test-parser
-make test-storage
 
 # All tests
 make check-all
 ```
 
-## Deployments
+## Next Steps
 
-The service has 3 production deployments:
-
-| Deployment | Description |
-|------------|-------------|
-| `prd-cej-discovery-api` | REST API to start searches |
-| `prd-cej-discovery-worker` | Temporal worker |
-| `prd-cej-discovery-browser` | Browser automation service |
-
+<CardGroup cols={2}>
+  <Card
+    title="clamo-cej-connector"
+    icon="plug"
+    href="/en/services/clamo-cej-connector"
+  >
+    Detailed extraction of known cases.
+  </Card>
+  <Card
+    title="Ingestion Pipeline"
+    icon="database"
+    href="/en/guides/debugging-ingestion"
+  >
+    Complete data flow.
+  </Card>
+</CardGroup>
