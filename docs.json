@@ -117,7 +117,10 @@
               {
                 "group": "Diseño del Sistema",
                 "pages": [
+                  "es/arquitectura/modelo-datos",
                   "es/arquitectura/pipeline-datos",
+                  "es/arquitectura/patron-rrs",
+                  "es/arquitectura/sdks-servicio",
                   "es/arquitectura/asistentes-ia",
                   "es/arquitectura/analiticas",
                   "es/arquitectura/seguridad"
@@ -222,7 +225,10 @@
               {
                 "group": "System Design",
                 "pages": [
+                  "en/architecture/data-model",
                   "en/architecture/data-pipeline",
+                  "en/architecture/rrs-pattern",
+                  "en/architecture/service-sdks",
                   "en/architecture/ai-assistants",
                   "en/architecture/analytics",
                   "en/architecture/security"
