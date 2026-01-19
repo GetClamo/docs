@@ -1,89 +1,123 @@
 ---
-title: Bienvenido a Clamo
-description: Plataforma de gestión de casos legales laborales para el mercado peruano
+title: "Documentación Clamo"
+description: "Documentación interna de Clamo, la plataforma de gestión de casos legales laborales para el mercado peruano"
 ---
 
-<img
-  src="/logo/blue.svg"
-  alt="Clamo Logo"
-  width="80"
-  height="80"
-  style={{ width: '80px', height: '80px', marginBottom: '20px' }}
-/>
+Plataforma SaaS multi-tenant para gestión de casos legales laborales en Perú. Automatiza el seguimiento de expedientes del CEJ, integra asistentes IA y proporciona analíticas en tiempo real.
 
-# Plataforma de Gestión Legal
+<Note>
+Esta documentacion es para uso interno del equipo de ingenieria de Clamo. Para preguntas sobre acceso a la API e integracion, contacta al equipo de plataforma.
+</Note>
 
-Clamo es una plataforma SaaS multi-tenant diseñada para la gestión integral de casos legales laborales en Perú. Automatiza el seguimiento de expedientes judiciales, integra asistentes de IA especializados y proporciona análisis en tiempo real.
-
-## Características Principales
+## Navegacion Rapida
 
 <CardGroup cols={2}>
-  <Card title="Seguimiento Automatizado" icon="radar">
-    Monitoreo automático de expedientes del CEJ (Centro de Justicia Electrónico) con actualizaciones en tiempo real.
+  <Card title="Inicio Rapido" icon="rocket" href="/es/inicio/inicio-rapido">
+    Configura tu entorno de desarrollo local en minutos.
   </Card>
-  <Card title="Multi-Tenancy" icon="building">
-    Arquitectura de base de datos por tenant con Neon PostgreSQL para aislamiento completo de datos.
+  <Card title="Arquitectura" icon="sitemap" href="/es/inicio/arquitectura">
+    Entiende el diseno del sistema y como interactuan los componentes.
+  </Card>
+  <Card title="Servicios" icon="server" href="/es/servicios/clamo-cases">
+    Explora los microservicios que impulsan la plataforma.
+  </Card>
+  <Card title="Referencia API" icon="code" href="/es/api-reference/introduccion">
+    Documentacion completa de endpoints con ejemplos interactivos.
+  </Card>
+</CardGroup>
+
+## Capacidades de la Plataforma
+
+<CardGroup cols={3}>
+  <Card title="Seguimiento Automatizado" icon="radar">
+    Monitoreo continuo de casos del CEJ con extraccion automatica de movimientos, resoluciones y anexos.
+  </Card>
+  <Card title="Arquitectura Multi-Tenant" icon="building">
+    Aislamiento de base de datos por tenant usando branches de Neon PostgreSQL para seguridad y cumplimiento.
   </Card>
   <Card title="Asistentes IA" icon="robot">
-    Agentes especializados con LangGraph para consultas de casos y análisis predictivo.
+    Tres asistentes especializados (Javi, Clamy, Luna) construidos con LangGraph para consultas de casos y analiticas.
   </Card>
-  <Card title="Analytics Avanzado" icon="chart-line">
-    Dashboards y métricas en tiempo real con Tinybird y ClickHouse.
+  <Card title="Dashboards en Tiempo Real" icon="chart-line">
+    Analiticas y metricas impulsadas por Tinybird y ClickHouse para insights instantaneos.
+  </Card>
+  <Card title="Trusted Sources" icon="shield-check">
+    Modelo de datos multi-origen con priorizacion automatica: manual > IA > CEJ.
+  </Card>
+  <Card title="Pipeline Event-Driven" icon="bolt">
+    Flujos de trabajo basados en Kafka y Temporal para procesamiento confiable de datos.
   </Card>
 </CardGroup>
 
-## Comenzar
+## Servicios Core
+
+La plataforma esta compuesta por microservicios especializados.
 
 <CardGroup cols={2}>
-  <Card
-    title="Introducción"
-    icon="book-open"
-    href="/es/inicio/introduccion"
-  >
-    Conoce qué es Clamo y cómo puede ayudar a tu equipo legal.
+  <Card title="clamo-cases" icon="briefcase" href="/es/servicios/clamo-cases">
+    API principal para gestion de casos legales con patron RRS y modelo Trusted Sources.
   </Card>
-  <Card
-    title="Arquitectura"
-    icon="sitemap"
-    href="/es/inicio/arquitectura"
-  >
-    Explora la arquitectura técnica y los componentes del sistema.
+  <Card title="clamo-tenant" icon="building" href="/es/servicios/clamo-tenant">
+    Aprovisionamiento multi-tenant y gestion de bases de datos via Neon.
   </Card>
-  <Card
-    title="Inicio Rápido"
-    icon="rocket"
-    href="/es/inicio/inicio-rapido"
-  >
-    Integra Clamo en tu aplicación en menos de 5 minutos.
+  <Card title="ask-clamo" icon="message-bot" href="/es/servicios/ask-clamo">
+    Servicio unificado de asistentes IA con perfiles Javi, Clamy y Luna.
   </Card>
-  <Card
-    title="API Reference"
-    icon="code"
-    href="/es/api-reference/introduccion"
-  >
-    Documentación completa de los endpoints disponibles.
+  <Card title="clamo-dashboards" icon="chart-bar" href="/es/servicios/clamo-dashboards">
+    Widgets de dashboard y API de analiticas respaldada por Tinybird.
   </Card>
 </CardGroup>
 
-## Pila Tecnológica
+<Tip>
+Consulta [todos los servicios](/es/servicios/clamo-tenant) para la lista completa incluyendo los servicios del pipeline de datos (CEJ Extractor, Discovery, Sync).
+</Tip>
 
-| Capa | Tecnologías |
-|------|-------------|
-| **Frontend** | Next.js 16, React 19, TypeScript |
-| **APIs** | Hono, Rust/Axum |
-| **Base de Datos** | Neon PostgreSQL, Prisma ORM |
-| **Analytics** | Tinybird, ClickHouse |
-| **IA** | LangGraph, LangChain, Anthropic |
-| **Autenticación** | WorkOS AuthKit |
-| **Mensajería** | Kafka, Temporal |
+## Modelo de Datos
 
-## Soporte
+Clamo utiliza una arquitectura de dos bases de datos separando el Control Plane de los Datos de Tenant.
 
-<Card
-  title="GitHub"
-  icon="github"
-  href="https://github.com/GetClamo"
->
-  Repositorios y código fuente de la plataforma.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Referencia de Entidades" icon="database" href="/es/entidades/index">
+    Vision general de la arquitectura de bases de datos y todas las entidades.
+  </Card>
+  <Card title="Entidad Case" icon="folder-open" href="/es/entidades/case">
+    La entidad Case principal con campos SourcedValue para datos multi-origen.
+  </Card>
+  <Card title="Movimientos y Timeline" icon="timeline" href="/es/entidades/movement">
+    Movimientos procesales, anexos y notificaciones.
+  </Card>
+  <Card title="Referencia de Enums" icon="list" href="/es/entidades/enums">
+    Todos los tipos de enumeracion usados en la plataforma.
+  </Card>
+</CardGroup>
 
+## Guias para Desarrolladores
+
+<CardGroup cols={2}>
+  <Card title="Autenticacion" icon="key" href="/es/guias/autenticacion">
+    Integracion con WorkOS AuthKit y patrones de autenticacion de API.
+  </Card>
+  <Card title="Multi-Tenancy" icon="users" href="/es/guias/multi-tenancy">
+    Entendiendo la resolucion de tenants y el enrutamiento de bases de datos.
+  </Card>
+  <Card title="Manejo de Errores" icon="triangle-exclamation" href="/es/guias/errores">
+    Codigos de error estandar y guia de solucion de problemas.
+  </Card>
+  <Card title="Mejores Practicas" icon="lightbulb" href="/es/guias/mejores-practicas">
+    Estandares de codigo y patrones para desarrollo en Clamo.
+  </Card>
+</CardGroup>
+
+## Recursos
+
+<CardGroup cols={3}>
+  <Card title="GitHub" icon="github" href="https://github.com/GetClamo">
+    Repositorios y codigo fuente de la plataforma.
+  </Card>
+  <Card title="Entorno Local" icon="laptop-code" href="/es/inicio/entorno-local">
+    Guia completa de configuracion local con Docker Compose.
+  </Card>
+  <Card title="Despliegue" icon="cloud-arrow-up" href="/es/guias/despliegue">
+    Procedimientos de despliegue y configuracion de entornos.
+  </Card>
+</CardGroup>

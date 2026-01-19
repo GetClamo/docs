@@ -1,0 +1,4416 @@
+{
+  "openapi": "3.1.0",
+  "x-mintlify": {
+    "base-path": "/api-reference/cases"
+  },
+  "info": {
+    "title": "Clamo Cases API",
+    "version": "2.0.0",
+    "description": "Legal case management API for Clamo platform",
+    "contact": {
+      "name": "Clamo Team",
+      "email": "support@clamo.ai"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:4000",
+      "description": "Local development"
+    },
+    {
+      "url": "https://api.stg.clamo.services",
+      "description": "Staging"
+    },
+    {
+      "url": "https://api.prd.clamo.services",
+      "description": "Production"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Cases",
+      "description": "Case management operations"
+    },
+    {
+      "name": "Movements",
+      "description": "Case movements and timeline events"
+    },
+    {
+      "name": "Parties",
+      "description": "Case parties (plaintiffs/defendants)"
+    },
+    {
+      "name": "Decisions",
+      "description": "Court decisions and rulings"
+    },
+    {
+      "name": "Stages",
+      "description": "Reference data: stages, substages, milestones"
+    },
+    {
+      "name": "System",
+      "description": "Health and system endpoints"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "ListCasesResponse": {
+        "type": "object",
+        "properties": {
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CaseListItem"
+            },
+            "description": "List of cases",
+            "x-stainless-pagination-property": {
+              "purpose": "items"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageResponse"
+          }
+        },
+        "required": [
+          "cases"
+        ]
+      },
+      "CaseListItem": {
+        "type": "object",
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/Case"
+          },
+          "plaintiff": {
+            "type": "string",
+            "description": "Primary plaintiff name",
+            "example": "GARCIA PEREZ, JUAN CARLOS"
+          },
+          "defendant": {
+            "type": "string",
+            "description": "Primary defendant name",
+            "example": "EMPRESA ACME S.A.C."
+          },
+          "internalResponsible": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "company": {
+            "$ref": "#/components/schemas/CompanySummary"
+          }
+        },
+        "required": [
+          "case",
+          "company"
+        ]
+      },
+      "Case": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the case",
+            "example": "550e8400-e29b-12d3-a456-426614174000"
+          },
+          "caseNumber": {
+            "type": "string",
+            "description": "Case number (expediente number from CEJ)",
+            "example": "04719-2017-0-1601-JP-LA-01"
+          },
+          "filingDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Date when the case was filed",
+            "example": "2017-09-12T00:00:00.000Z"
+          },
+          "subjectMatter": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcedValue"
+            },
+            "description": "Subject matter(s) of the case (Materia(s))"
+          },
+          "processType": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourcedValue"
+              },
+              {
+                "description": "Type of legal process (Proceso)"
+              }
+            ]
+          },
+          "stage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourcedValue"
+              },
+              {
+                "description": "Current stage of the case"
+              }
+            ]
+          },
+          "abstract": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourcedValue"
+              },
+              {
+                "description": "Case abstract (Sumilla)"
+              }
+            ]
+          },
+          "observation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourcedValue"
+              },
+              {
+                "description": "Observation notes"
+              }
+            ]
+          },
+          "conclusionReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourcedValue"
+              },
+              {
+                "description": "Conclusion reason (Motivo Conclusión)"
+              }
+            ]
+          },
+          "cejJudicialDistrict": {
+            "type": "string",
+            "description": "CEJ judicial district",
+            "example": "LA LIBERTAD"
+          },
+          "cejProceduralStage": {
+            "type": "string",
+            "description": "CEJ procedural stage",
+            "example": "EJECUCIÓN DE SENTENCIA"
+          },
+          "court": {
+            "type": "string",
+            "description": "Court name",
+            "example": "1° JUZGADO DE PAZ LETRADO LABORAL"
+          },
+          "judge": {
+            "type": "string",
+            "description": "Judge name",
+            "example": "RODRIGUEZ RODRIGUEZ LUIS ALBERTO"
+          },
+          "legalSpecialist": {
+            "type": "string",
+            "description": "Legal specialist name"
+          },
+          "specialty": {
+            "type": "string",
+            "description": "Case specialty",
+            "example": "LABORAL"
+          },
+          "location": {
+            "type": "string",
+            "description": "Case location",
+            "example": "TRUJILLO"
+          },
+          "aiConclusionDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "AI-determined conclusion date"
+          },
+          "manualInternalResponsibleId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Manually assigned internal responsible user ID"
+          },
+          "manualExternalAdvisor": {
+            "type": "string",
+            "description": "Manually assigned external advisor"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was created"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was last updated"
+          }
+        },
+        "required": [
+          "id",
+          "caseNumber",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "SourcedValue": {
+        "type": "object",
+        "properties": {
+          "cej": {
+            "type": "string",
+            "description": "Value from CEJ (judicial system)"
+          },
+          "ai": {
+            "type": "string",
+            "description": "Value from AI/LLM"
+          },
+          "manual": {
+            "type": "string",
+            "description": "Manually entered value"
+          }
+        }
+      },
+      "UserSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "User ID",
+            "example": "550e8400-e29b-12d3-a456-426614174000"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "User email",
+            "example": "user@example.com"
+          },
+          "firstName": {
+            "type": "string",
+            "description": "First name",
+            "example": "John"
+          },
+          "lastName": {
+            "type": "string",
+            "description": "Last name",
+            "example": "Doe"
+          }
+        },
+        "required": [
+          "id",
+          "email"
+        ],
+        "description": "Internal responsible user"
+      },
+      "CompanySummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Company ID",
+            "example": "550e8400-e29b-12d3-a456-426614174000"
+          },
+          "name": {
+            "type": "string",
+            "description": "Company name",
+            "example": "Acme Corporation"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "description": "Company that owns this case"
+      },
+      "PageResponse": {
+        "type": "object",
+        "properties": {
+          "nextPageToken": {
+            "type": "string",
+            "description": "Token for the next page, empty if no more pages",
+            "x-stainless-pagination-property": {
+              "purpose": "next_cursor_field"
+            }
+          },
+          "totalSize": {
+            "type": "integer",
+            "description": "Total number of items"
+          }
+        },
+        "description": "Pagination info"
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Error message",
+            "example": "Resource not found"
+          },
+          "code": {
+            "type": "string",
+            "description": "Error code",
+            "example": "NOT_FOUND"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Additional error details"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "GetCaseResponse": {
+        "type": "object",
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/CaseWithDetails"
+          },
+          "internalResponsible": {
+            "$ref": "#/components/schemas/UserSummary"
+          },
+          "company": {
+            "$ref": "#/components/schemas/CompanySummary"
+          }
+        },
+        "required": [
+          "case",
+          "company"
+        ]
+      },
+      "CaseWithDetails": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Case"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "movements": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Movement"
+                },
+                "description": "List of movements in the case"
+              },
+              "parties": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Party"
+                },
+                "description": "List of parties in the case"
+              }
+            }
+          }
+        ],
+        "description": "Case with details"
+      },
+      "Movement": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the movement",
+            "example": "550e8400-e29b-12d3-a456-426614174000"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Case ID this movement belongs to"
+          },
+          "stablePosition": {
+            "type": "integer",
+            "description": "Stable position (1 = oldest, never changes when new movements added)",
+            "example": 1
+          },
+          "cejPosition": {
+            "type": "integer",
+            "description": "CEJ position (1 = newest) - calculated at query time",
+            "example": 1
+          },
+          "cejEventDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "CEJ event date"
+          },
+          "cejDecreeDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "CEJ decree date"
+          },
+          "cejActo": {
+            "type": "string",
+            "description": "Type of action/event from CEJ",
+            "example": "Escrito"
+          },
+          "cejResolution": {
+            "type": "string",
+            "description": "Resolution reference from CEJ"
+          },
+          "cejNotificationType": {
+            "type": "string",
+            "description": "Type of notification from CEJ"
+          },
+          "cejFolios": {
+            "type": "integer",
+            "description": "Number of folios from CEJ"
+          },
+          "cejHojas": {
+            "type": "integer",
+            "description": "Number of pages from CEJ"
+          },
+          "cejDescription": {
+            "type": "string",
+            "description": "Description from CEJ"
+          },
+          "cejRawPayload": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Raw CEJ payload"
+          },
+          "name": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourcedValue"
+              },
+              {
+                "description": "Short display name (e.g., 'Admisión demanda')"
+              }
+            ]
+          },
+          "summary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourcedValue"
+              },
+              {
+                "description": "Brief summary of the movement"
+              }
+            ]
+          },
+          "tags": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Movement tags"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Additional metadata"
+          },
+          "stageCode": {
+            "type": "string",
+            "description": "Stage code",
+            "example": "PRIMERA_INSTANCIA"
+          },
+          "subStageCode": {
+            "type": "string",
+            "description": "Sub-stage code",
+            "example": "DEMANDA"
+          },
+          "milestoneCode": {
+            "type": "string",
+            "description": "Milestone code",
+            "example": "ADMISION_DEMANDA"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovementAttachment"
+            },
+            "description": "Attached documents"
+          },
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovementNotification"
+            },
+            "description": "Notifications related to this movement"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was created"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was last updated"
+          }
+        },
+        "required": [
+          "id",
+          "caseId",
+          "stablePosition",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "MovementAttachment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Attachment ID"
+          },
+          "movementId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Movement ID this attachment belongs to"
+          },
+          "cejNid": {
+            "type": "string",
+            "description": "CEJ document NID"
+          },
+          "kind": {
+            "type": "string",
+            "description": "Attachment kind (e.g., pdf, image)"
+          },
+          "label": {
+            "type": "string",
+            "description": "Display label"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL to access the attachment"
+          },
+          "contentHash": {
+            "type": "string",
+            "description": "Content hash for deduplication"
+          },
+          "contentType": {
+            "type": "string",
+            "description": "MIME content type",
+            "example": "application/pdf"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "description": "File size in bytes"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AttachmentState"
+          },
+          "aiExtractedText": {
+            "type": "string",
+            "description": "AI-extracted text from the document"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Additional metadata"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the attachment was created"
+          }
+        },
+        "required": [
+          "id",
+          "movementId",
+          "kind",
+          "state",
+          "createdAt"
+        ]
+      },
+      "AttachmentState": {
+        "type": "string",
+        "enum": [
+          "ATTACHMENT_STATE_UNSPECIFIED",
+          "ATTACHMENT_STATE_PENDING",
+          "ATTACHMENT_STATE_DOWNLOADED",
+          "ATTACHMENT_STATE_FAILED",
+          "ATTACHMENT_STATE_NOT_AVAILABLE"
+        ],
+        "description": "Current state of the attachment"
+      },
+      "MovementNotification": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Notification ID"
+          },
+          "movementId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Movement ID this notification belongs to"
+          },
+          "cejCodigo": {
+            "type": "string",
+            "description": "CEJ notification code"
+          },
+          "destinatario": {
+            "type": "string",
+            "description": "Recipient name"
+          },
+          "fechaEnvio": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Date sent"
+          },
+          "anexos": {
+            "type": "string",
+            "description": "Attachments description"
+          },
+          "formaEntrega": {
+            "type": "string",
+            "description": "Delivery method"
+          },
+          "extraFechas": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Additional dates as key-value pairs"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the notification was created"
+          }
+        },
+        "required": [
+          "id",
+          "movementId",
+          "destinatario",
+          "createdAt"
+        ]
+      },
+      "Party": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the party",
+            "example": "550e8400-e29b-12d3-a456-426614174000"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Case ID this party belongs to"
+          },
+          "name": {
+            "type": "string",
+            "description": "Party name",
+            "example": "GARCIA PEREZ, JUAN CARLOS"
+          },
+          "type": {
+            "$ref": "#/components/schemas/PartyType"
+          },
+          "role": {
+            "$ref": "#/components/schemas/PartyRole"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was created"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was last updated"
+          }
+        },
+        "required": [
+          "id",
+          "caseId",
+          "name",
+          "type",
+          "role",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "PartyType": {
+        "type": "string",
+        "enum": [
+          "PARTY_TYPE_UNSPECIFIED",
+          "PARTY_TYPE_NATURAL",
+          "PARTY_TYPE_JURIDICA",
+          "PARTY_TYPE_UNKNOWN"
+        ],
+        "description": "Party type (natural person or legal entity)"
+      },
+      "PartyRole": {
+        "type": "string",
+        "enum": [
+          "PARTY_ROLE_UNSPECIFIED",
+          "PARTY_ROLE_PLAINTIFF",
+          "PARTY_ROLE_DEFENDANT",
+          "PARTY_ROLE_THIRD_PARTY",
+          "PARTY_ROLE_OTHER"
+        ],
+        "description": "Party role in the case"
+      },
+      "CreateCaseResponse": {
+        "type": "object",
+        "properties": {
+          "case": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Case"
+              },
+              {
+                "description": "The created case"
+              }
+            ]
+          }
+        },
+        "required": [
+          "case"
+        ]
+      },
+      "CreateCaseRequest": {
+        "type": "object",
+        "properties": {
+          "caseNumber": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Case number (expediente)",
+            "example": "04719-2017-0-1601-JP-LA-01"
+          },
+          "plaintiff": {
+            "type": "string",
+            "description": "Plaintiff name (legacy field)",
+            "example": "GARCIA PEREZ, JUAN CARLOS"
+          },
+          "defendant": {
+            "type": "string",
+            "description": "Defendant name (legacy field)",
+            "example": "EMPRESA ACME S.A.C."
+          }
+        },
+        "required": [
+          "caseNumber"
+        ]
+      },
+      "UpdateCaseResponse": {
+        "type": "object",
+        "properties": {
+          "case": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Case"
+              },
+              {
+                "description": "The updated case"
+              }
+            ]
+          }
+        },
+        "required": [
+          "case"
+        ]
+      },
+      "UpdateCaseRequest": {
+        "type": "object",
+        "properties": {
+          "case": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Unique identifier for the case",
+                "example": "550e8400-e29b-12d3-a456-426614174000"
+              },
+              "caseNumber": {
+                "type": "string",
+                "description": "Case number (expediente number from CEJ)",
+                "example": "04719-2017-0-1601-JP-LA-01"
+              },
+              "filingDate": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Date when the case was filed",
+                "example": "2017-09-12T00:00:00.000Z"
+              },
+              "subjectMatter": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SourcedValue"
+                },
+                "description": "Subject matter(s) of the case (Materia(s))"
+              },
+              "processType": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SourcedValue"
+                  },
+                  {
+                    "description": "Type of legal process (Proceso)"
+                  }
+                ]
+              },
+              "stage": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SourcedValue"
+                  },
+                  {
+                    "description": "Current stage of the case"
+                  }
+                ]
+              },
+              "abstract": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SourcedValue"
+                  },
+                  {
+                    "description": "Case abstract (Sumilla)"
+                  }
+                ]
+              },
+              "observation": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SourcedValue"
+                  },
+                  {
+                    "description": "Observation notes"
+                  }
+                ]
+              },
+              "conclusionReason": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/SourcedValue"
+                  },
+                  {
+                    "description": "Conclusion reason (Motivo Conclusión)"
+                  }
+                ]
+              },
+              "cejJudicialDistrict": {
+                "type": "string",
+                "description": "CEJ judicial district",
+                "example": "LA LIBERTAD"
+              },
+              "cejProceduralStage": {
+                "type": "string",
+                "description": "CEJ procedural stage",
+                "example": "EJECUCIÓN DE SENTENCIA"
+              },
+              "court": {
+                "type": "string",
+                "description": "Court name",
+                "example": "1° JUZGADO DE PAZ LETRADO LABORAL"
+              },
+              "judge": {
+                "type": "string",
+                "description": "Judge name",
+                "example": "RODRIGUEZ RODRIGUEZ LUIS ALBERTO"
+              },
+              "legalSpecialist": {
+                "type": "string",
+                "description": "Legal specialist name"
+              },
+              "specialty": {
+                "type": "string",
+                "description": "Case specialty",
+                "example": "LABORAL"
+              },
+              "location": {
+                "type": "string",
+                "description": "Case location",
+                "example": "TRUJILLO"
+              },
+              "aiConclusionDate": {
+                "type": "string",
+                "format": "date-time",
+                "description": "AI-determined conclusion date"
+              },
+              "manualInternalResponsibleId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "Manually assigned internal responsible user ID"
+              },
+              "manualExternalAdvisor": {
+                "type": "string",
+                "description": "Manually assigned external advisor"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When the record was created"
+              },
+              "updatedAt": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When the record was last updated"
+              }
+            },
+            "description": "Case fields to update"
+          },
+          "updateMask": {
+            "type": "string",
+            "description": "Comma-separated list of fields to update",
+            "example": "court,judge,specialty"
+          }
+        }
+      },
+      "DeleteCaseResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the deletion was successful"
+          },
+          "documentsDeleted": {
+            "type": "number",
+            "description": "Number of S3 documents deleted"
+          }
+        },
+        "required": [
+          "success"
+        ]
+      },
+      "CreateCaseIngestRunResponse": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/CaseIngestRun"
+          }
+        },
+        "required": [
+          "run"
+        ]
+      },
+      "CaseIngestRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Ingest run ID"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Case ID"
+          },
+          "expediente": {
+            "type": "string",
+            "description": "Case number (expediente) for debugging"
+          },
+          "manifestHash": {
+            "type": "string",
+            "description": "Hash of the parsed manifest/HTML used for the run"
+          },
+          "expectedPositions": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Expected CEJ movement positions for this run"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaseIngestRunStatus"
+          },
+          "enrichmentReadyAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When movements were complete and enrichment was unblocked"
+          },
+          "analysisCompletedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When analysis completed for this run"
+          },
+          "errorMessage": {
+            "type": "string",
+            "description": "Failure reason (if status=FAILED)"
+          },
+          "errorDetails": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Structured error details (if status=FAILED)"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the run was created"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the run was last updated"
+          }
+        },
+        "required": [
+          "id",
+          "caseId",
+          "expediente",
+          "manifestHash",
+          "expectedPositions",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "CaseIngestRunStatus": {
+        "type": "string",
+        "enum": [
+          "RUNNING",
+          "FAILED",
+          "MOVEMENTS_COMPLETE",
+          "ANALYSIS_COMPLETE"
+        ]
+      },
+      "CreateCaseIngestRunRequest": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client-supplied run ID"
+          },
+          "expediente": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Case number (expediente)"
+          },
+          "manifestHash": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Hash of the manifest/HTML"
+          },
+          "expectedPositions": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minItems": 1,
+            "description": "Expected CEJ movement positions for this run"
+          },
+          "forceRefresh": {
+            "type": "boolean",
+            "description": "Operator flag for manual refresh/debug runs (not used for correctness)"
+          }
+        },
+        "required": [
+          "runId",
+          "expediente",
+          "manifestHash",
+          "expectedPositions"
+        ]
+      },
+      "GetCaseIngestRunResponse": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/CaseIngestRun"
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "expected": {
+                "type": "integer",
+                "description": "Expected movement count"
+              },
+              "completed": {
+                "type": "integer",
+                "description": "Completed movement count for this run"
+              },
+              "missingPositionsSample": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "description": "Sample of missing CEJ positions for this run"
+              }
+            },
+            "required": [
+              "expected",
+              "completed",
+              "missingPositionsSample"
+            ]
+          }
+        },
+        "required": [
+          "run",
+          "progress"
+        ]
+      },
+      "MarkEnrichmentReadyResponse": {
+        "type": "object",
+        "properties": {
+          "emitted": {
+            "type": "boolean",
+            "description": "True if enrichmentReadyAt was set by this call (set-if-null)"
+          }
+        },
+        "required": [
+          "emitted"
+        ]
+      },
+      "MarkAnalysisCompleteResponse": {
+        "type": "object",
+        "properties": {
+          "updated": {
+            "type": "boolean",
+            "description": "True if analysisCompletedAt was set by this call (set-if-null)"
+          }
+        },
+        "required": [
+          "updated"
+        ]
+      },
+      "FailIngestRunResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "True if the run was marked FAILED"
+          }
+        },
+        "required": [
+          "success"
+        ]
+      },
+      "FailIngestRunRequest": {
+        "type": "object",
+        "properties": {
+          "errorMessage": {
+            "type": "string",
+            "description": "Failure reason"
+          },
+          "errorDetails": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Structured error details"
+          }
+        }
+      },
+      "GetLatestIngestRunByExpedienteResponse": {
+        "type": "object",
+        "properties": {
+          "found": {
+            "type": "boolean",
+            "description": "True if a completed ingest run was found"
+          },
+          "run": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CaseIngestRun"
+              },
+              {
+                "description": "The latest completed ingest run (if found)"
+              }
+            ]
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The case ID (if case exists)"
+          }
+        },
+        "required": [
+          "found"
+        ]
+      },
+      "ListMovementsResponse": {
+        "type": "object",
+        "properties": {
+          "movements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Movement"
+            },
+            "description": "List of movements",
+            "x-stainless-pagination-property": {
+              "purpose": "items"
+            }
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageResponse"
+          }
+        },
+        "required": [
+          "movements"
+        ]
+      },
+      "SortOrder": {
+        "type": "string",
+        "enum": [
+          "SORT_ORDER_UNSPECIFIED",
+          "SORT_ORDER_ASC",
+          "SORT_ORDER_DESC"
+        ],
+        "default": "SORT_ORDER_DESC",
+        "description": "Sort order by occurred_at"
+      },
+      "UpsertMovementResponse": {
+        "type": "object",
+        "properties": {
+          "movement": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Movement"
+              },
+              {
+                "description": "The created/updated movement"
+              }
+            ]
+          },
+          "created": {
+            "type": "boolean",
+            "description": "Whether the movement was created (true) or updated (false)"
+          }
+        },
+        "required": [
+          "movement",
+          "created"
+        ]
+      },
+      "UpsertMovementRequest": {
+        "type": "object",
+        "properties": {
+          "sourceSystem": {
+            "$ref": "#/components/schemas/SourceSystem"
+          },
+          "expediente": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Case number (expediente)",
+            "example": "04719-2017-0-1601-JP-LA-01"
+          },
+          "cejPosition": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "CEJ position (1 = newest)",
+            "example": 1
+          },
+          "totalMovements": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Total number of movements in the case (used to calculate stablePosition)",
+            "example": 50
+          },
+          "ingestRunId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Ingest run ID that last touched this movement (DB-backed orchestration)"
+          },
+          "cejEventDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "CEJ event date"
+          },
+          "cejDecreeDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "CEJ decree date"
+          },
+          "cejActo": {
+            "type": "string",
+            "description": "Type of action/event"
+          },
+          "cejResolution": {
+            "type": "string",
+            "description": "Resolution reference"
+          },
+          "cejNotificationType": {
+            "type": "string",
+            "description": "Type of notification"
+          },
+          "cejFolios": {
+            "type": "integer",
+            "description": "Number of folios"
+          },
+          "cejHojas": {
+            "type": "integer",
+            "description": "Number of pages"
+          },
+          "cejDescription": {
+            "type": "string",
+            "description": "Description"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Brief summary"
+          },
+          "stageCode": {
+            "type": "string",
+            "description": "Stage code"
+          },
+          "subStageCode": {
+            "type": "string",
+            "description": "Sub-stage code"
+          },
+          "milestoneCode": {
+            "type": "string",
+            "description": "Milestone code"
+          }
+        },
+        "required": [
+          "expediente",
+          "cejPosition",
+          "totalMovements"
+        ]
+      },
+      "SourceSystem": {
+        "type": "string",
+        "enum": [
+          "SOURCE_SYSTEM_UNSPECIFIED",
+          "SOURCE_SYSTEM_CEJ",
+          "SOURCE_SYSTEM_MANUAL",
+          "SOURCE_SYSTEM_IMPORT"
+        ],
+        "default": "SOURCE_SYSTEM_CEJ",
+        "description": "Source system for the movement"
+      },
+      "UpdateMovementResponse": {
+        "type": "object",
+        "properties": {
+          "movement": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Movement"
+              },
+              {
+                "description": "The updated movement"
+              }
+            ]
+          }
+        },
+        "required": [
+          "movement"
+        ]
+      },
+      "UpdateMovementRequest": {
+        "type": "object",
+        "properties": {
+          "stageCode": {
+            "type": "string",
+            "description": "Stage code to update"
+          },
+          "subStageCode": {
+            "type": "string",
+            "description": "Sub-stage code to update"
+          },
+          "milestoneCode": {
+            "type": "string",
+            "description": "Milestone code to update"
+          },
+          "aiName": {
+            "type": "string",
+            "description": "AI-enriched short display name"
+          },
+          "aiSummary": {
+            "type": "string",
+            "description": "AI-enriched brief summary"
+          },
+          "lastIngestRunId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Ingest run ID that last touched this movement (DB-backed orchestration)"
+          }
+        }
+      },
+      "ListNotificationsResponse": {
+        "type": "object",
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovementNotification"
+            },
+            "description": "List of notifications"
+          }
+        },
+        "required": [
+          "notifications"
+        ]
+      },
+      "CreateNotificationResponse": {
+        "type": "object",
+        "properties": {
+          "notification": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MovementNotification"
+              },
+              {
+                "description": "The created notification"
+              }
+            ]
+          }
+        },
+        "required": [
+          "notification"
+        ]
+      },
+      "CreateNotificationRequest": {
+        "type": "object",
+        "properties": {
+          "cejCodigo": {
+            "type": "string",
+            "description": "CEJ notification code"
+          },
+          "destinatario": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Recipient name"
+          },
+          "fechaEnvio": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Date sent"
+          },
+          "anexos": {
+            "type": "string",
+            "description": "Attachments description"
+          },
+          "formaEntrega": {
+            "type": "string",
+            "description": "Delivery method"
+          },
+          "extraFechas": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Additional dates"
+          }
+        },
+        "required": [
+          "destinatario"
+        ]
+      },
+      "DeleteNotificationResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the deletion was successful"
+          }
+        },
+        "required": [
+          "success"
+        ]
+      },
+      "ListAttachmentsResponse": {
+        "type": "object",
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovementAttachment"
+            },
+            "description": "List of attachments"
+          }
+        },
+        "required": [
+          "attachments"
+        ]
+      },
+      "CreateAttachmentResponse": {
+        "type": "object",
+        "properties": {
+          "attachment": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MovementAttachment"
+              },
+              {
+                "description": "The created attachment"
+              }
+            ]
+          }
+        },
+        "required": [
+          "attachment"
+        ]
+      },
+      "CreateAttachmentRequest": {
+        "type": "object",
+        "properties": {
+          "nid": {
+            "type": "string",
+            "description": "CEJ document NID (unique identifier)"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "File name",
+            "example": "document.pdf"
+          },
+          "contentBase64": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Base64 encoded file content"
+          },
+          "contentType": {
+            "type": "string",
+            "description": "MIME content type",
+            "example": "application/pdf"
+          }
+        },
+        "required": [
+          "name",
+          "contentBase64"
+        ]
+      },
+      "DeleteAttachmentResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the deletion was successful"
+          }
+        },
+        "required": [
+          "success"
+        ]
+      },
+      "ListPartiesResponse": {
+        "type": "object",
+        "properties": {
+          "parties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Party"
+            },
+            "description": "List of parties"
+          }
+        },
+        "required": [
+          "parties"
+        ]
+      },
+      "UpsertPartyResponse": {
+        "type": "object",
+        "properties": {
+          "party": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Party"
+              },
+              {
+                "description": "The created/updated party"
+              }
+            ]
+          },
+          "created": {
+            "type": "boolean",
+            "description": "Whether the party was created (true) or updated (false)"
+          }
+        },
+        "required": [
+          "party",
+          "created"
+        ]
+      },
+      "UpsertPartyRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Party name",
+            "example": "GARCIA PEREZ, JUAN CARLOS"
+          },
+          "type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PartyType"
+              },
+              {
+                "description": "Party type"
+              }
+            ]
+          },
+          "role": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PartyRole"
+              },
+              {
+                "description": "Party role"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "role"
+        ]
+      },
+      "DeletePartyResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the deletion was successful"
+          }
+        },
+        "required": [
+          "success"
+        ]
+      },
+      "ListDecisionsResponse": {
+        "type": "object",
+        "properties": {
+          "decisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Decision"
+            },
+            "description": "List of decisions"
+          }
+        },
+        "required": [
+          "decisions"
+        ]
+      },
+      "Decision": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the decision",
+            "example": "550e8400-e29b-12d3-a456-426614174000"
+          },
+          "caseId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Case ID this decision belongs to"
+          },
+          "movementId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Movement ID that contains this decision"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/DecisionScope"
+          },
+          "decidedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Date when the decision was made"
+          },
+          "cejDecisionCode": {
+            "type": "string",
+            "description": "CEJ-sourced decision code"
+          },
+          "instanceResult": {
+            "$ref": "#/components/schemas/InstanceResult"
+          },
+          "defendantOutcome": {
+            "$ref": "#/components/schemas/DefendantOutcome"
+          },
+          "aiDocumentSummary": {
+            "type": "string",
+            "description": "AI-generated summary of the decision document"
+          },
+          "judges": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Judges involved in the decision"
+          },
+          "reportingJudge": {
+            "type": "string",
+            "description": "Reporting judge (Juez ponente)"
+          },
+          "amountPrincipal": {
+            "type": "string",
+            "description": "Principal monetary amount (decimal as string)"
+          },
+          "amountOthers": {
+            "type": "string",
+            "description": "Other monetary amounts (costs, etc.)"
+          },
+          "isFinalDecision": {
+            "type": "boolean",
+            "description": "Whether this is the final decision for the case"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was created"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was last updated"
+          }
+        },
+        "required": [
+          "id",
+          "caseId",
+          "movementId",
+          "scope",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "DecisionScope": {
+        "type": "string",
+        "enum": [
+          "DECISION_SCOPE_UNSPECIFIED",
+          "DECISION_SCOPE_FIRST_INSTANCE",
+          "DECISION_SCOPE_APPEAL",
+          "DECISION_SCOPE_CASSATION"
+        ],
+        "description": "Judicial instance scope"
+      },
+      "InstanceResult": {
+        "type": "string",
+        "enum": [
+          "INSTANCE_RESULT_UNSPECIFIED",
+          "INSTANCE_RESULT_FAVORABLE",
+          "INSTANCE_RESULT_UNFAVORABLE",
+          "INSTANCE_RESULT_PARTIAL",
+          "INSTANCE_RESULT_NULL"
+        ],
+        "description": "Result of this instance"
+      },
+      "DefendantOutcome": {
+        "type": "string",
+        "enum": [
+          "DEFENDANT_OUTCOME_UNSPECIFIED",
+          "DEFENDANT_OUTCOME_WIN",
+          "DEFENDANT_OUTCOME_LOSE",
+          "DEFENDANT_OUTCOME_PARTIAL",
+          "DEFENDANT_OUTCOME_SETTLED"
+        ],
+        "description": "Outcome for the defendant"
+      },
+      "UpsertDecisionResponse": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Decision"
+              },
+              {
+                "description": "The created/updated decision"
+              }
+            ]
+          },
+          "created": {
+            "type": "boolean",
+            "description": "Whether the decision was created (true) or updated (false)"
+          }
+        },
+        "required": [
+          "decision",
+          "created"
+        ]
+      },
+      "UpsertDecisionRequest": {
+        "type": "object",
+        "properties": {
+          "movementId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Movement ID that contains this decision"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/DecisionScope"
+          },
+          "decidedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Date when the decision was made"
+          },
+          "cejDecisionCode": {
+            "type": "string",
+            "description": "CEJ-sourced decision code"
+          },
+          "instanceResult": {
+            "$ref": "#/components/schemas/InstanceResult"
+          },
+          "defendantOutcome": {
+            "$ref": "#/components/schemas/DefendantOutcome"
+          },
+          "aiDocumentSummary": {
+            "type": "string",
+            "description": "AI-generated summary"
+          },
+          "judges": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Judges involved"
+          },
+          "reportingJudge": {
+            "type": "string",
+            "description": "Reporting judge"
+          },
+          "amountPrincipal": {
+            "type": "string",
+            "description": "Principal amount"
+          },
+          "amountOthers": {
+            "type": "string",
+            "description": "Other amounts"
+          },
+          "isFinalDecision": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether this is the final decision"
+          }
+        },
+        "required": [
+          "movementId",
+          "scope"
+        ]
+      },
+      "GetTimelineResponse": {
+        "type": "object",
+        "properties": {
+          "timeline": {
+            "$ref": "#/components/schemas/Timeline"
+          }
+        },
+        "required": [
+          "timeline"
+        ]
+      },
+      "Timeline": {
+        "type": "object",
+        "properties": {
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineStage"
+            },
+            "description": "All stages (flat view)"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/TimelineSummary"
+          },
+          "rounds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineRound"
+            },
+            "description": "Grouped by round (handles nullities)"
+          },
+          "chronologicalEntries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineEntry"
+            },
+            "description": "All entries in chronological order"
+          }
+        },
+        "required": [
+          "stages",
+          "summary",
+          "rounds",
+          "chronologicalEntries"
+        ],
+        "description": "Timeline data"
+      },
+      "TimelineStage": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stage code"
+          },
+          "name": {
+            "type": "string",
+            "description": "Stage display name"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TimelineStageStatus"
+          },
+          "subStages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineSubStage"
+            },
+            "description": "Sub-stages within this stage"
+          },
+          "roundCount": {
+            "type": "integer",
+            "description": "Number of distinct rounds in this stage"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "status",
+          "subStages"
+        ]
+      },
+      "TimelineStageStatus": {
+        "type": "string",
+        "enum": [
+          "TIMELINE_STAGE_STATUS_UNSPECIFIED",
+          "TIMELINE_STAGE_STATUS_FUTURE",
+          "TIMELINE_STAGE_STATUS_CURRENT",
+          "TIMELINE_STAGE_STATUS_PAST"
+        ],
+        "description": "Stage status"
+      },
+      "TimelineSubStage": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Sub-stage code"
+          },
+          "name": {
+            "type": "string",
+            "description": "Sub-stage display name"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TimelineStageStatus"
+              },
+              {
+                "description": "Sub-stage status"
+              }
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineEntry"
+            },
+            "description": "Timeline entries in this sub-stage"
+          },
+          "roundCount": {
+            "type": "integer",
+            "description": "Number of distinct rounds in this sub-stage"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "status",
+          "entries"
+        ]
+      },
+      "TimelineEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Entry ID (movement or milestone ID)"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TimelineEntryKind"
+          },
+          "occurredAt": {
+            "type": "string",
+            "description": "When this entry occurred (ISO timestamp)"
+          },
+          "title": {
+            "type": "string",
+            "description": "Display title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description text"
+          },
+          "stageName": {
+            "type": "string",
+            "description": "Stage display name"
+          },
+          "subStageName": {
+            "type": "string",
+            "description": "Sub-stage display name"
+          },
+          "stageCode": {
+            "type": "string",
+            "description": "Stage code"
+          },
+          "subStageCode": {
+            "type": "string",
+            "description": "Sub-stage code"
+          },
+          "acto": {
+            "type": "string",
+            "description": "CEJ acto or resolution"
+          },
+          "documentUrl": {
+            "type": "string",
+            "description": "URL to download the associated document"
+          },
+          "proceduralRound": {
+            "type": "integer",
+            "description": "Procedural round (1 = initial, 2+ = after nullity)"
+          },
+          "isLoopMarker": {
+            "type": "boolean",
+            "description": "Whether this entry marks a procedural loop (nullity)"
+          },
+          "milestoneCode": {
+            "type": "string",
+            "description": "Milestone code if this is a milestone"
+          },
+          "sourcedName": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourcedValue"
+              },
+              {
+                "description": "Sourced name values (cej, ai, manual)"
+              }
+            ]
+          },
+          "sourcedSummary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SourcedValue"
+              },
+              {
+                "description": "Sourced summary values (cej, ai, manual)"
+              }
+            ]
+          },
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MovementNotification"
+            },
+            "description": "Notifications for this entry"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ]
+      },
+      "TimelineEntryKind": {
+        "type": "string",
+        "enum": [
+          "TIMELINE_ENTRY_KIND_UNSPECIFIED",
+          "TIMELINE_ENTRY_KIND_MOVEMENT",
+          "TIMELINE_ENTRY_KIND_MILESTONE",
+          "TIMELINE_ENTRY_KIND_DECISION"
+        ],
+        "description": "Type of timeline entry"
+      },
+      "TimelineSummary": {
+        "type": "object",
+        "properties": {
+          "totalMovements": {
+            "type": "integer",
+            "description": "Total number of movements"
+          },
+          "totalMilestones": {
+            "type": "integer",
+            "description": "Total number of milestones"
+          },
+          "earliestDate": {
+            "type": "string",
+            "description": "Earliest entry date (ISO timestamp)"
+          },
+          "latestDate": {
+            "type": "string",
+            "description": "Latest entry date (ISO timestamp)"
+          },
+          "loopCount": {
+            "type": "integer",
+            "description": "Number of procedural loops (nullities)"
+          },
+          "roundCount": {
+            "type": "integer",
+            "description": "Total number of rounds (loopCount + 1)"
+          }
+        },
+        "required": [
+          "totalMovements",
+          "totalMilestones",
+          "loopCount",
+          "roundCount"
+        ],
+        "description": "Timeline summary statistics"
+      },
+      "TimelineRound": {
+        "type": "object",
+        "properties": {
+          "roundNumber": {
+            "type": "integer",
+            "description": "Round number (1 = initial, 2+ = after nullity)"
+          },
+          "label": {
+            "type": "string",
+            "description": "Human-readable label for this round"
+          },
+          "startDate": {
+            "type": "string",
+            "description": "When this round started (ISO timestamp)"
+          },
+          "endDate": {
+            "type": "string",
+            "description": "When this round ended (ISO timestamp)"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TimelineEntry"
+            },
+            "description": "All entries in this round"
+          },
+          "endedByNullity": {
+            "type": "boolean",
+            "description": "Whether this round was ended by a nullity"
+          }
+        },
+        "required": [
+          "roundNumber",
+          "label",
+          "entries"
+        ]
+      },
+      "ListStagesResponse": {
+        "type": "object",
+        "properties": {
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Stage"
+            },
+            "description": "List of stages"
+          }
+        },
+        "required": [
+          "stages"
+        ]
+      },
+      "Stage": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Unique stage code",
+            "example": "PRIMERA_INSTANCIA"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name",
+            "example": "Primera Instancia"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed description"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Display order",
+            "example": 1
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "order"
+        ]
+      },
+      "ListSubStagesResponse": {
+        "type": "object",
+        "properties": {
+          "subStages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubStage"
+            },
+            "description": "List of sub-stages"
+          }
+        },
+        "required": [
+          "subStages"
+        ]
+      },
+      "SubStage": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Unique sub-stage code",
+            "example": "DEMANDA"
+          },
+          "stageCode": {
+            "type": "string",
+            "description": "Parent stage code",
+            "example": "PRIMERA_INSTANCIA"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name",
+            "example": "Demanda"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed description"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Display order within the stage",
+            "example": 1
+          }
+        },
+        "required": [
+          "code",
+          "stageCode",
+          "name",
+          "order"
+        ]
+      },
+      "ListMilestonesResponse": {
+        "type": "object",
+        "properties": {
+          "milestones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Milestone"
+            },
+            "description": "List of milestones"
+          }
+        },
+        "required": [
+          "milestones"
+        ]
+      },
+      "Milestone": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Unique milestone code",
+            "example": "ADMISION_DEMANDA"
+          },
+          "subStageCode": {
+            "type": "string",
+            "description": "Parent sub-stage code",
+            "example": "DEMANDA"
+          },
+          "stageCode": {
+            "type": "string",
+            "description": "Parent stage code",
+            "example": "PRIMERA_INSTANCIA"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name",
+            "example": "Admisión de Demanda"
+          },
+          "description": {
+            "type": "string",
+            "description": "Detailed description"
+          },
+          "isTerminal": {
+            "type": "boolean",
+            "description": "Whether this milestone ends the case"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Display order within the sub-stage",
+            "example": 1
+          }
+        },
+        "required": [
+          "code",
+          "subStageCode",
+          "stageCode",
+          "name",
+          "order"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/v1/companies/{companyId}/cases": {
+      "get": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "List cases",
+        "description": "List cases for a company with pagination",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "default": false,
+              "description": "Include cases from subsidiary companies",
+              "example": false
+            },
+            "required": false,
+            "description": "Include cases from subsidiary companies",
+            "name": "includeSubsidiaries",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "description": "Number of items per page",
+              "example": 20
+            },
+            "required": false,
+            "description": "Number of items per page",
+            "name": "pageSize",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Token for the next page"
+            },
+            "required": false,
+            "description": "Token for the next page",
+            "name": "pageToken",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of cases",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListCasesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Create case",
+        "description": "Create a new case for a company",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Case created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateCaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}": {
+      "get": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Get case details",
+        "description": "Get a case with optional movements and parties",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "default": true,
+              "description": "Include movements in the response",
+              "example": true
+            },
+            "required": false,
+            "description": "Include movements in the response",
+            "name": "includeMovements",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "default": true,
+              "description": "Include parties in the response",
+              "example": true
+            },
+            "required": false,
+            "description": "Include parties in the response",
+            "name": "includeParties",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Case details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCaseResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Case not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Update case",
+        "description": "Update an existing case",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Case updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateCaseResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Case not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Delete case",
+        "description": "Delete a case and all related data",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Case deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteCaseResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Case not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/ingest-runs": {
+      "post": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Create ingest run",
+        "description": "Create or reset a DB-backed ingest run for a case",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCaseIngestRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ingest run created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateCaseIngestRunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/ingest-runs/{runId}": {
+      "get": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Get ingest run",
+        "description": "Get ingest run and DB-sourced progress",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Ingest run ID"
+            },
+            "required": true,
+            "description": "Ingest run ID",
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ingest run details + progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetCaseIngestRunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/ingest-runs/{runId}/mark-enrichment-ready": {
+      "post": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Mark enrichment ready",
+        "description": "Set enrichmentReadyAt once (set-if-null semantics)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Ingest run ID"
+            },
+            "required": true,
+            "description": "Ingest run ID",
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mark enrichment ready result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkEnrichmentReadyResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/ingest-runs/{runId}/mark-analysis-complete": {
+      "post": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Mark analysis complete",
+        "description": "Set analysisCompletedAt once (set-if-null semantics)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Ingest run ID"
+            },
+            "required": true,
+            "description": "Ingest run ID",
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mark analysis complete result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkAnalysisCompleteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/ingest-runs/{runId}/fail": {
+      "post": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Fail ingest run",
+        "description": "Mark an ingest run FAILED (idempotent)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Ingest run ID"
+            },
+            "required": true,
+            "description": "Ingest run ID",
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FailIngestRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Fail run result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FailIngestRunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Run not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/ingest-runs/by-expediente/{expediente}/latest-ingest-run": {
+      "get": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Get latest completed ingest run by expediente",
+        "description": "Returns the latest completed ingest run for a case identified by expediente. Used by CEJ extractor to check if re-extraction is needed by comparing manifestHash.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Case number (expediente)",
+              "example": "04719-2017-0-1601-JP-LA-01"
+            },
+            "required": true,
+            "description": "Case number (expediente)",
+            "name": "expediente",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest ingest run lookup result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetLatestIngestRunByExpedienteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/movements": {
+      "get": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "List movements",
+        "description": "List movements for a case with filtering and pagination",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter by stage code"
+            },
+            "required": false,
+            "description": "Filter by stage code",
+            "name": "stageCode",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter by sub-stage code"
+            },
+            "required": false,
+            "description": "Filter by sub-stage code",
+            "name": "subStageCode",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "default": false,
+              "description": "Only return milestones"
+            },
+            "required": false,
+            "description": "Only return milestones",
+            "name": "milestoneOnly",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/SortOrder"
+            },
+            "required": false,
+            "description": "Sort order by occurred_at",
+            "name": "order",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50,
+              "description": "Number of items per page"
+            },
+            "required": false,
+            "description": "Number of items per page",
+            "name": "pageSize",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Token for the next page"
+            },
+            "required": false,
+            "description": "Token for the next page",
+            "name": "pageToken",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of movements",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMovementsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/movements/upsert": {
+      "post": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "Upsert movement",
+        "description": "Create or update a movement by CEJ position",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertMovementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Movement created or updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpsertMovementResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/movements/{movementId}": {
+      "patch": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "Update movement",
+        "description": "Update movement classification (stage, substage, milestone, AI fields)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Movement ID",
+              "example": "550e8400-e29b-12d3-a456-426614174002"
+            },
+            "required": true,
+            "description": "Movement ID",
+            "name": "movementId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMovementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Movement updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateMovementResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Movement not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/movements/{movementId}/notifications": {
+      "get": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "List notifications",
+        "description": "List all notifications for a movement",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Movement ID",
+              "example": "550e8400-e29b-12d3-a456-426614174002"
+            },
+            "required": true,
+            "description": "Movement ID",
+            "name": "movementId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of notifications",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListNotificationsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Movement not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "Create notification",
+        "description": "Create a new notification for a movement",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Movement ID",
+              "example": "550e8400-e29b-12d3-a456-426614174002"
+            },
+            "required": true,
+            "description": "Movement ID",
+            "name": "movementId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNotificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Notification created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateNotificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Movement not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/movements/{movementId}/notifications/{notificationId}": {
+      "delete": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "Delete notification",
+        "description": "Delete a notification",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Movement ID",
+              "example": "550e8400-e29b-12d3-a456-426614174002"
+            },
+            "required": true,
+            "description": "Movement ID",
+            "name": "movementId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Notification ID",
+              "example": "550e8400-e29b-12d3-a456-426614174004"
+            },
+            "required": true,
+            "description": "Notification ID",
+            "name": "notificationId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notification deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteNotificationResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Movement not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/movements/{movementId}/attachments": {
+      "get": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "List attachments",
+        "description": "List all attachments for a movement",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Movement ID",
+              "example": "550e8400-e29b-12d3-a456-426614174002"
+            },
+            "required": true,
+            "description": "Movement ID",
+            "name": "movementId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of attachments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAttachmentsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Movement not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "Create attachment",
+        "description": "Create a new attachment for a movement (upload document)",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Movement ID",
+              "example": "550e8400-e29b-12d3-a456-426614174002"
+            },
+            "required": true,
+            "description": "Movement ID",
+            "name": "movementId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAttachmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Attachment created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateAttachmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Movement not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/movements/{movementId}/attachments/{attachmentId}": {
+      "delete": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "Delete attachment",
+        "description": "Delete an attachment",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Movement ID",
+              "example": "550e8400-e29b-12d3-a456-426614174002"
+            },
+            "required": true,
+            "description": "Movement ID",
+            "name": "movementId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Attachment ID",
+              "example": "550e8400-e29b-12d3-a456-426614174006"
+            },
+            "required": true,
+            "description": "Attachment ID",
+            "name": "attachmentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attachment deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteAttachmentResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Attachment not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/movements/{movementId}/attachments/{attachmentId}/download": {
+      "get": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "Download attachment",
+        "description": "Redirect to attachment download URL",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Movement ID",
+              "example": "550e8400-e29b-12d3-a456-426614174002"
+            },
+            "required": true,
+            "description": "Movement ID",
+            "name": "movementId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Attachment ID",
+              "example": "550e8400-e29b-12d3-a456-426614174006"
+            },
+            "required": true,
+            "description": "Attachment ID",
+            "name": "attachmentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to document URL"
+          },
+          "404": {
+            "description": "Attachment not found or no URL available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/parties": {
+      "get": {
+        "tags": [
+          "Parties"
+        ],
+        "summary": "List parties",
+        "description": "List all parties (plaintiffs, defendants) for a case",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of parties",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListPartiesResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Parties"
+        ],
+        "summary": "Upsert party",
+        "description": "Create or update a party by name and role",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertPartyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Party created or updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpsertPartyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/parties/{partyId}": {
+      "delete": {
+        "tags": [
+          "Parties"
+        ],
+        "summary": "Delete party",
+        "description": "Delete a party from a case",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Party ID",
+              "example": "550e8400-e29b-12d3-a456-426614174003"
+            },
+            "required": true,
+            "description": "Party ID",
+            "name": "partyId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Party deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletePartyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/milestones": {
+      "get": {
+        "tags": [
+          "Movements"
+        ],
+        "summary": "List milestones",
+        "description": "List milestones (movements with milestone codes) for a case",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "SORT_ORDER_UNSPECIFIED",
+                "SORT_ORDER_ASC",
+                "SORT_ORDER_DESC"
+              ],
+              "default": "SORT_ORDER_DESC"
+            },
+            "required": false,
+            "name": "order",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "required": false,
+            "name": "pageSize",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "pageToken",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of milestones",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMovementsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/decisions": {
+      "get": {
+        "tags": [
+          "Decisions"
+        ],
+        "summary": "List decisions",
+        "description": "List court decisions for a case, optionally filtered by scope",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/DecisionScope"
+                },
+                {
+                  "description": "Filter by decision scope"
+                }
+              ]
+            },
+            "required": false,
+            "description": "Filter by decision scope",
+            "name": "scope",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of decisions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListDecisionsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/decisions/upsert": {
+      "post": {
+        "tags": [
+          "Decisions"
+        ],
+        "summary": "Upsert decision",
+        "description": "Create or update a court decision by movement ID and scope",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision created or updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpsertDecisionResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Decision created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpsertDecisionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/companies/{companyId}/cases/{caseId}/timeline": {
+      "get": {
+        "tags": [
+          "Cases"
+        ],
+        "summary": "Get case timeline",
+        "description": "Get a pre-grouped timeline for a case, including stages, rounds, and chronological view",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Company ID",
+              "example": "550e8400-e29b-12d3-a456-426614174000"
+            },
+            "required": true,
+            "description": "Company ID",
+            "name": "companyId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Case ID",
+              "example": "550e8400-e29b-12d3-a456-426614174001"
+            },
+            "required": true,
+            "description": "Case ID",
+            "name": "caseId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Case timeline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetTimelineResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Case not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stages": {
+      "get": {
+        "tags": [
+          "Stages"
+        ],
+        "summary": "List stages",
+        "description": "List all process stages (e.g., Primera Instancia, Apelación)",
+        "responses": {
+          "200": {
+            "description": "List of stages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListStagesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stages/substages": {
+      "get": {
+        "tags": [
+          "Stages"
+        ],
+        "summary": "List sub-stages",
+        "description": "List sub-stages, optionally filtered by parent stage",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter by parent stage code"
+            },
+            "required": false,
+            "description": "Filter by parent stage code",
+            "name": "stageCode",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of sub-stages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListSubStagesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stages/milestones": {
+      "get": {
+        "tags": [
+          "Stages"
+        ],
+        "summary": "List milestones",
+        "description": "List milestones, optionally filtered by parent sub-stage",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter by parent sub-stage code"
+            },
+            "required": false,
+            "description": "Filter by parent sub-stage code",
+            "name": "subStageCode",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of milestones",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListMilestonesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}

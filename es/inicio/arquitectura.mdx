@@ -37,7 +37,6 @@ flowchart TB
     subgraph Pipeline [Pipeline de Datos]
         CEJ[clamo-cej-connector<br/>Python/Temporal]
         Discovery[clamo-cej-discovery<br/>Python]
-        Ingest[clamo-ingest-go<br/>Go/Kafka]
         Sync[clamo-sync<br/>Rust]
     end
 
@@ -51,8 +50,7 @@ flowchart TB
     WebApp --> AskClamo
     Tenant --> DB
     Cases --> DB
-    CEJ --> Ingest
-    Ingest --> DB
+    CEJ --> DB
     Sync --> Analytics
     AskClamo --> ClamoTools
     ClamoTools --> Cases
@@ -94,7 +92,6 @@ flowchart TB
 |----------|------------|-------------|
 | `clamo-cej-connector` | Python, Temporal | Scraping del CEJ con browser automation y normalización LLM |
 | `clamo-cej-discovery` | Python | Descubrimiento de nuevos expedientes por RUC |
-| `clamo-ingest-go` | Go, Kafka | Worker de ingesta de alta performance con batch inserts |
 | `clamo-sync` | Rust | Sincronización de datos hacia Tinybird para analytics |
 
 ### Almacenamiento
@@ -145,7 +142,7 @@ sequenceDiagram
     participant T as Temporal
     participant LLM as Anthropic
     participant K as Kafka
-    participant I as clamo-ingest-go
+    participant Cases as clamo-cases
     participant DB as Neon Database
 
     S->>CEJ: Trigger job
@@ -155,8 +152,8 @@ sequenceDiagram
     CEJ->>LLM: Normalize data
     LLM-->>CEJ: Structured payload
     CEJ->>K: Publish CASE_READY
-    K->>I: Consume event
-    I->>DB: Batch insert (COPY)
+    K->>Cases: Consume event
+    Cases->>DB: Batch insert (COPY)
 ```
 
 ## Autenticación y Seguridad
@@ -202,9 +199,9 @@ Los paquetes de contratos API han sido deprecados. Todos los servicios ahora usa
   <Card
     title="Servicios"
     icon="server"
-    href="/es/servicios/catalogo"
+    href="/es/servicios/clamo-cases"
   >
-    Documentación detallada de cada servicio.
+    Explora los servicios de la plataforma.
   </Card>
 </CardGroup>
 

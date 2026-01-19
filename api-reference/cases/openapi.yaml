@@ -1,4 +1,6 @@
 openapi: 3.1.0
+x-mintlify:
+  base-path: /api-reference/cases
 info:
   title: Clamo Cases API
   description: API para gestión de expedientes judiciales, movimientos e hitos procesales

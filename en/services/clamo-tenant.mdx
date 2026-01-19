@@ -3,8 +3,6 @@ title: clamo-tenant
 description: Company, user management and multi-tenant provisioning service
 ---
 
-# clamo-tenant
-
 Central service for tenant (company) management, users, onboarding, and database provisioning. Acts as the **source of truth** for tenant connection resolution.
 
 ## General Information
@@ -28,7 +26,7 @@ Central service for tenant (company) management, users, onboarding, and database
 - Credential storage in **Supabase Vault**
 - **Source of truth** for tenant connection resolution
 
-## RRS Architecture
+## Architecture
 
 ```mermaid
 flowchart TB
@@ -71,34 +69,6 @@ flowchart TB
     CompanyService --> CompanyRepo
 ```
 
-## Directory Structure
-
-```
-clamo-tenant/src/
-├── routes/
-│   ├── me.ts              # /v1/me - Current user
-│   ├── companies.ts       # /v1/companies
-│   ├── admin.ts           # /v1/admin/... - Admin operations
-│   ├── internal.ts        # /internal/v1/... - Service-to-service
-│   └── reference-data.ts  # Reference data
-├── services/
-│   ├── user.service.ts
-│   ├── company.service.ts
-│   ├── provisioning.service.ts  # Creates Neon branches
-│   └── internal.service.ts      # Connection resolution
-├── repositories/
-│   ├── user.repository.ts
-│   └── company.repository.ts
-├── clients/
-│   ├── workos.client.ts   # WorkOS SDK
-│   ├── neon.client.ts     # Neon API
-│   └── vault.client.ts    # Supabase Vault
-├── middleware/
-│   └── auth.ts            # Parses x-workos-* headers
-└── events/
-    └── kafka.adapter.ts   # Provisioning events
-```
-
 ## Authentication
 
 The service uses `x-workos-*` headers injected by Kong:
@@ -111,43 +81,11 @@ const role = headers.get("x-workos-role") ?? "member";
 const permissionsHeader = headers.get("x-workos-permissions");
 ```
 
-## Main Endpoints
+## API Endpoints
 
-### Current User
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/v1/me` | Get current user |
-| GET | `/v1/me/company` | Get user's company |
-| PATCH | `/v1/me/onboarding` | Complete onboarding |
-
-### Companies
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/v1/companies/:id` | Get company |
-| PATCH | `/v1/companies/:id` | Update company |
-
-### Admin
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/v1/admin/companies` | Create company |
-| GET | `/v1/admin/companies` | List companies |
-| DELETE | `/v1/admin/companies/:id` | Delete company |
-| POST | `/v1/admin/companies/:id/invite` | Invite user |
-
-### Internal Endpoints
-
-<Warning>
-**Service-to-service only.** These endpoints are the source of truth for connection resolution.
-</Warning>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/internal/v1/companies/:id` | Get company (internal) |
-| GET | `/internal/v1/companies/:id/database` | Get DB connection |
-| GET | `/internal/v1/companies/by-org/:orgId` | Find by WorkOS org |
+<Info>
+For the complete interactive API documentation, see the [Tenant API Reference](/api-reference/tenant/usuario/obtener-usuario-actual).
+</Info>
 
 ## Provisioning Flow
 
@@ -182,74 +120,13 @@ sequenceDiagram
 
 ## Data Model
 
-### Company
-
-```typescript
-interface Company {
-  id: string;
-  workosOrgId: string;
-  name: string;
-  ruc: string | null;
-  parentId: string | null;
-  plan: 'free' | 'pro' | 'enterprise';
-  settings: Record<string, unknown>;
-  metadata: Record<string, unknown>;
-  databaseStatus: 'pending' | 'provisioning' | 'ready' | 'failed';
-  ownerEmail: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
-### CompanyDatabase
-
-```typescript
-interface CompanyDatabase {
-  id: string;
-  companyId: string;
-  neonProjectId: string;
-  neonBranchId: string;
-  neonEndpointId: string | null;
-  databaseName: string;
-  databaseHost: string;
-  databaseUser: string;
-  pooledConnSecretId: string;  // ID in Supabase Vault
-  directConnSecretId: string;  // ID in Supabase Vault
-  status: 'active' | 'suspended' | 'deleted';
-}
-```
-
-### User
-
-```typescript
-interface User {
-  id: string;
-  workosUserId: string;
-  email: string;
-  firstName: string | null;
-  lastName: string | null;
-  companyId: string;
-  role: 'admin' | 'member';
-  onboardingState: 'pending_onboarding' | 'completed';
-  createdAt: Date;
-}
-```
+<Info>
+For complete entity documentation including Company, CompanyDatabase, and User, see the [Entities](/en/entities/company) section.
+</Info>
 
 ## Connection Resolution
 
-The service exposes internal endpoints for other services to resolve connections:
-
-```typescript
-// From clamo-cases using the SDK
-import Tenant from "@getclamo/tenant";
-
-const tenant = new Tenant({ baseURL: env.TENANT_SERVICE_URL });
-
-// Get database connection
-const { connectionString } = await tenant.internal
-  .companies(companyId)
-  .database.get();
-```
+The service exposes internal endpoints for other services to resolve tenant database connections. See the [SDKs](#sdks) section for usage examples in TypeScript, Python, and Rust.
 
 ## Configuration
 
@@ -278,14 +155,38 @@ SUPABASE_SERVICE_KEY=...
 KAFKA_BROKERS=localhost:9092
 ```
 
-## SDK
+## SDKs
 
-This service publishes a TypeScript SDK:
+This service publishes typed SDKs generated from the OpenAPI specification using [Stainless](https://stainless.com) (TypeScript/Python) and OpenAPI Generator (Rust).
 
-```bash
+| SDK | Package | Repository |
+|-----|---------|------------|
+| TypeScript | `@getclamo/tenant` | [GetClamo/clamo-tenant-sdk-ts](https://github.com/GetClamo/clamo-tenant-sdk-ts) |
+| Python | `getclamo-tenant` | [GetClamo/clamo-tenant-sdk-py](https://github.com/GetClamo/clamo-tenant-sdk-py) |
+| Rust | `clamo-tenant-sdk` | [GetClamo/clamo-tenant-sdk-rust](https://github.com/GetClamo/clamo-tenant-sdk-rust) |
+
+### Installation
+
+<CodeGroup>
+```bash TypeScript
 pnpm add @getclamo/tenant
+# or
+npm install @getclamo/tenant
 ```
 
+```bash Python
+pip install getclamo-tenant
+```
+
+```bash Rust
+cargo add clamo-tenant-sdk
+```
+</CodeGroup>
+
+### Usage
+
+<Tabs>
+<Tab title="TypeScript">
 ```typescript
 import Tenant from "@getclamo/tenant";
 
@@ -301,6 +202,38 @@ const company = await tenant.me.company();
 const companyData = await tenant.internal.companies(companyId).get();
 const dbConnection = await tenant.internal.companies(companyId).database.get();
 ```
+</Tab>
+<Tab title="Python">
+```python
+from getclamo_tenant import Tenant
+
+tenant = Tenant(base_url=os.environ["TENANT_SERVICE_URL"])
+
+# Get current user
+user = tenant.me.get()
+
+# Get user's company
+company = tenant.me.company()
+
+# Internal endpoints (service-to-service)
+company_data = tenant.internal.companies(company_id).get()
+db_connection = tenant.internal.companies(company_id).database.get()
+```
+</Tab>
+<Tab title="Rust">
+```rust
+use clamo_tenant_sdk::Client;
+
+let tenant = Client::new(std::env::var("TENANT_SERVICE_URL")?);
+
+// Get current user
+let user = tenant.me().get().send().await?;
+
+// Get user's company
+let company = tenant.me().company().send().await?;
+```
+</Tab>
+</Tabs>
 
 ## Local Development
 
@@ -325,17 +258,17 @@ pnpm test
 
 <CardGroup cols={2}>
   <Card
-    title="Service SDKs"
-    icon="plug"
-    href="/en/architecture/service-sdks"
+    title="Entities"
+    icon="database"
+    href="/en/entities/company"
   >
-    Service-to-service communication.
+    Company entity documentation.
   </Card>
   <Card
-    title="Security"
-    icon="shield"
-    href="/en/architecture/security"
+    title="clamo-cases"
+    icon="briefcase"
+    href="/en/services/clamo-cases"
   >
-    Chain of trust and Vault.
+    Case management service.
   </Card>
 </CardGroup>

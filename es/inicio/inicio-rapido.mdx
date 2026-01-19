@@ -1,273 +1,220 @@
 ---
 title: Inicio Rápido
-description: Integra Clamo en tu aplicación en menos de 5 minutos
+description: Configura tu entorno de desarrollo de Clamo con el CLI clamo
 ---
 
-# Inicio Rápido
-
-Esta guía te ayudará a realizar tu primera integración con las APIs de Clamo.
+El CLI `clamo` orquesta tu entorno de desarrollo local. Gestiona servicios, bases de datos y dependencias.
 
 ## Prerrequisitos
 
-Antes de comenzar, necesitas:
+| Software | Versión | Propósito |
+|----------|---------|-----------|
+| Node.js | 20+ | Frontend y servicios TypeScript |
+| pnpm | 10+ | Gestor de paquetes |
+| Python | 3.10+ | CLI y servicios Python |
+| uv | Última | Gestor de paquetes Python |
+| Docker | Última | CEJ extractor y discovery workers |
 
-- Credenciales de acceso a Clamo (proporcionadas por tu administrador)
-- Un token de sesión válido de WorkOS
-- Node.js 20+ o Python 3.10+ (según tu stack)
-
-## Paso 1: Obtener Token de Autenticación
-
-Clamo utiliza WorkOS AuthKit para autenticación. El token de sesión se obtiene después del login:
+### Instalar uv
 
 <CodeGroup>
-
-```javascript JavaScript
-import { getSession } from '@workos-inc/authkit-nextjs';
-
-const session = await getSession();
-const accessToken = session?.accessToken;
+```bash Linux/macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-```python Python
-# El token se obtiene del flujo de autenticación WorkOS
-# En producción, Kong valida el JWT e inyecta headers x-workos-*
-from workos import WorkOS
-
-workos = WorkOS(api_key=os.environ["WORKOS_API_KEY"])
-# Después del callback OAuth
-auth_response = workos.user_management.authenticate_with_code(
-    client_id=os.environ["WORKOS_CLIENT_ID"],
-    code=auth_code,
-)
-access_token = auth_response.access_token
+```powershell Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+```bash Homebrew
+brew install uv
+```
 </CodeGroup>
 
-## Paso 2: Configurar Headers
-
-Todas las solicitudes a Clamo requieren los siguientes headers:
+Reinicia tu terminal y verifica:
 
 ```bash
-Authorization: Bearer <workos_access_token>
-Content-Type: application/json
+uv --version
 ```
+
+## Instalación
+
+<Steps>
+  <Step title="Clona el monorepo">
+    ```bash
+    git clone git@github.com:GetClamo/clamo.git
+    cd clamo
+    ```
+  </Step>
+
+  <Step title="Instala el CLI">
+    ```bash
+    cd clamo-setup
+    uv tool install . --force
+    ```
+
+    Reinicia tu terminal y verifica:
+    ```bash
+    clamo --help
+    ```
+  </Step>
+
+  <Step title="Ejecuta el wizard de configuración">
+    Desde el directorio raíz de clamo:
+    ```bash
+    cd /path/to/clamo
+    clamo dev setup
+    ```
+
+    El wizard te preguntará qué servicios ejecutar.
+  </Step>
+
+  <Step title="Inicia los servicios">
+    ```bash
+    clamo dev start
+    ```
+  </Step>
+</Steps>
 
 <Note>
-**Nota sobre `x-clamo-session`:** Este header es **legacy** y solo se usa en desarrollo local sin Kong. En producción, Kong valida el JWT e inyecta los headers `x-workos-*` automáticamente.
+Siempre ejecuta los comandos `clamo` desde el directorio raíz de clamo (donde están `clamo-web-app`, `clamo-cases`, etc.).
 </Note>
 
-## Paso 3: Obtener Información del Usuario
+## Servicios Disponibles
 
-<CodeGroup>
+| Servicio | Descripción | Puerto | Tipo |
+|----------|-------------|--------|------|
+| `clamo-web` | Frontend Next.js | 3000 | Local |
+| `clamo-cases` | API de Casos | 4000 | Local |
+| `clamo-tenant` | API de Tenants | 4001 | Local |
+| `clamo-dashboards` | API de Dashboards (Rust) | 8020 | Local |
+| `clamo-widget-server` | Widget Server | 3005 | Local |
+| `luna` | Asistente IA (LangGraph) | 8000 | Local |
+| `clamo-tools` | API REST de Tools IA | 8080 | Local |
+| `clamo-cej-extractor` | CEJ Extractor + Inngest | 8003 | Docker |
+| `clamo-cej-discovery` | Discovery workers | - | Docker |
 
-```javascript JavaScript
-const response = await fetch('https://api.clamo.dev/v1/me', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-  },
-});
+## Comandos
 
-const user = await response.json();
-console.log(user);
-// {
-//   id: "usr_abc123",
-//   email: "usuario@empresa.com",
-//   firstName: "Juan",
-//   lastName: "Pérez",
-//   role: "admin",
-//   companyId: "cmp_xyz789"
-// }
+### Desarrollo
+
+| Comando | Descripción |
+|---------|-------------|
+| `clamo dev setup` | Configuración interactiva del entorno |
+| `clamo dev start` | Inicia todos los servicios configurados |
+| `clamo dev start --rebuild` | Inicia y reconstruye contenedores Docker |
+| `clamo dev stop` | Detiene servicios Docker |
+| `clamo dev restart` | Reinicia todos los servicios |
+| `clamo dev restart --rebuild` | Reinicia y reconstruye contenedores |
+
+### Base de Datos
+
+| Comando | Descripción |
+|---------|-------------|
+| `clamo db migrate stg` | Ejecuta migraciones en staging |
+| `clamo db migrate prd` | Ejecuta migraciones en producción |
+| `clamo db status stg` | Verifica estado de migraciones |
+| `clamo db studio stg` | Abre Prisma Studio |
+
+### Gestión del CLI
+
+| Comando | Descripción |
+|---------|-------------|
+| `clamo update` | Actualiza el CLI desde el código fuente |
+| `clamo uninstall` | Desinstala el CLI |
+
+## Flujo de Trabajo Diario
+
+```bash
+# Setup inicial (una vez)
+clamo dev setup
+
+# Iniciar servicios
+clamo dev start
+
+# ... trabaja en tu código ...
+# Ctrl+C para detener
+
+# Reiniciar si es necesario
+clamo dev restart
+
+# Reconstruir contenedores si cambiaron dependencias
+clamo dev restart --rebuild
 ```
 
-```python Python
-import httpx
+## Hot Reload
 
-response = httpx.get(
-    "https://api.clamo.dev/v1/me",
-    headers={
-        "Authorization": f"Bearer {access_token}",
-    }
-)
+Todos los servicios tienen hot reload habilitado:
 
-user = response.json()
-print(user)
+| Servicio | Hot Reload |
+|----------|------------|
+| clamo-web (Next.js) | Automático |
+| clamo-cases | Via `pnpm dev` |
+| clamo-tenant | Via `pnpm dev` |
+| luna (LangGraph) | Via `langgraph dev` |
+| clamo-tools | Via `uvicorn --reload` |
+
+## Cuándo Reconstruir Contenedores
+
+**Necesita rebuild:**
+- Cambiaron dependencias (`pyproject.toml`, `uv.lock`)
+- Cambió el Dockerfile
+- Se actualizó la imagen base
+
+```bash
+clamo dev restart --rebuild
 ```
 
-```bash cURL
-curl -X GET https://api.clamo.dev/v1/me \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
+**No necesita rebuild:**
+- Cambios en código Python (hot reload)
+- Cambios en `.env`
+- Cambios de configuración en runtime
 
-</CodeGroup>
+## Configuración
 
-## Paso 4: Listar Casos
+La configuración se guarda en `clamo.dev.config.json` en el directorio raíz. Ejecuta `clamo dev setup` en cualquier momento para cambiar tu configuración.
 
-Una vez autenticado, puedes obtener los casos de tu empresa:
+## Troubleshooting
 
-<CodeGroup>
+<AccordionGroup>
+  <Accordion title="clamo: command not found">
+    Reinicia tu terminal después de instalar el CLI. Si usas instalación de desarrollo, activa el virtualenv:
+    ```bash
+    cd clamo-setup
+    source .venv/bin/activate
+    ```
+  </Accordion>
 
-```javascript JavaScript
-const response = await fetch('https://api.clamo.dev/v1/cases', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-  },
-});
+  <Accordion title="Los contenedores Docker no inician">
+    Verifica que Docker esté corriendo:
+    ```bash
+    docker ps
+    ```
+    Si hay contenedores huérfanos:
+    ```bash
+    clamo dev stop
+    docker system prune
+    clamo dev start --rebuild
+    ```
+  </Accordion>
 
-const { data: cases, pagination } = await response.json();
-
-cases.forEach(caso => {
-  console.log(`${caso.expediente} - ${caso.demandante} vs ${caso.demandado}`);
-  console.log(`  Estado: ${caso.status}`);
-  console.log(`  Riesgo: ${caso.riskLevel}`);
-});
-```
-
-```python Python
-response = httpx.get(
-    "https://api.clamo.dev/v1/cases",
-    headers={
-        "Authorization": f"Bearer {access_token}",
-    }
-)
-
-data = response.json()
-for caso in data["data"]:
-    print(f"{caso['expediente']} - {caso['demandante']} vs {caso['demandado']}")
-```
-
-```bash cURL
-curl -X GET "https://api.clamo.dev/v1/cases" \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-```
-
-</CodeGroup>
-
-## Paso 5: Obtener Detalle de un Caso
-
-<CodeGroup>
-
-```javascript JavaScript
-const caseId = 'case_abc123';
-
-const response = await fetch(`https://api.clamo.dev/v1/cases/${caseId}`, {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-  },
-});
-
-const caso = await response.json();
-
-console.log('Expediente:', caso.expediente);
-console.log('Movimientos:', caso.movements.length);
-console.log('Último movimiento:', caso.movements[0]?.description);
-
-// Campos SourcedValue - valor resuelto
-console.log('Materia:', caso.subjectMatter); // Resuelto de manual > ai > cej
-```
-
-```python Python
-case_id = "case_abc123"
-
-response = httpx.get(
-    f"https://api.clamo.dev/v1/cases/{case_id}",
-    headers={
-        "Authorization": f"Bearer {access_token}",
-    }
-)
-
-caso = response.json()
-print(f"Expediente: {caso['expediente']}")
-print(f"Movimientos: {len(caso['movements'])}")
-```
-
-</CodeGroup>
-
-## Ejemplo Completo
-
-Aquí tienes un ejemplo completo de integración:
-
-```javascript
-// clamo-client.js
-class ClamoClient {
-  constructor(accessToken) {
-    this.baseUrl = 'https://api.clamo.dev';
-    this.headers = {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    };
-  }
-
-  async getMe() {
-    const response = await fetch(`${this.baseUrl}/v1/me`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-
-  async getCompany() {
-    const response = await fetch(`${this.baseUrl}/v1/me/company`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-
-  async listCases(params = {}) {
-    const query = new URLSearchParams(params).toString();
-    const response = await fetch(`${this.baseUrl}/v1/cases?${query}`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-
-  async getCase(caseId) {
-    const response = await fetch(`${this.baseUrl}/v1/cases/${caseId}`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-
-  async getCaseMovements(caseId) {
-    const response = await fetch(`${this.baseUrl}/v1/cases/${caseId}/movements`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-}
-
-// Uso
-const client = new ClamoClient(accessToken);
-const user = await client.getMe();
-const cases = await client.listCases({ status: 'EN_TRAMITE' });
-```
-
-## Endpoints Principales
-
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | `/v1/me` | Información del usuario actual |
-| GET | `/v1/me/company` | Información de la empresa |
-| GET | `/v1/cases` | Listar casos |
-| GET | `/v1/cases/:id` | Detalle de un caso |
-| GET | `/v1/cases/:id/movements` | Movimientos de un caso |
-| GET | `/v1/cases/:id/milestones` | Hitos procesales |
-| GET | `/v1/cases/:id/progress` | Progreso por etapas |
+  <Accordion title="Puerto en uso">
+    Verifica qué proceso está usando el puerto:
+    ```bash
+    lsof -i :3000  # web
+    lsof -i :4000  # cases
+    lsof -i :4001  # tenant
+    ```
+  </Accordion>
+</AccordionGroup>
 
 ## Próximos Pasos
 
 <CardGroup cols={2}>
-  <Card
-    title="Autenticación"
-    icon="key"
-    href="/es/guias/autenticacion"
-  >
-    Aprende más sobre el flujo de autenticación con WorkOS.
+  <Card title="Arquitectura" icon="sitemap" href="/es/inicio/arquitectura">
+    Entiende cómo se conectan los servicios.
   </Card>
-  <Card
-    title="API Reference"
-    icon="code"
-    href="/es/api-reference/introduccion"
-  >
-    Documentación completa de todos los endpoints.
+  <Card title="Servicios" icon="server" href="/es/servicios/clamo-cases">
+    Explora los microservicios.
   </Card>
 </CardGroup>

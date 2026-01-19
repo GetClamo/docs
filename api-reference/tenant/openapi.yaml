@@ -1,4 +1,6 @@
 openapi: 3.1.0
+x-mintlify:
+  base-path: /api-reference/tenant
 info:
   title: Clamo Tenant API
   description: API para gestión de empresas, usuarios y configuración multi-tenant

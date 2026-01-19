@@ -1,249 +1,165 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
+  "theme": "maple",
   "name": "Clamo Internal Docs",
   "colors": {
-    "primary": "#3B22FF",
-    "light": "#5B4AFF",
-    "dark": "#2A18CC"
+    "primary": "#2563eb",
+    "light": "#3b82f6",
+    "dark": "#1d4ed8"
   },
   "logo": {
     "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg",
-    "height": 28
+    "dark": "/logo/dark.svg"
   },
   "favicon": "/favicon.svg",
   "navigation": {
     "languages": [
       {
         "language": "es",
-        "tabs": [
+        "groups": [
           {
-            "tab": "Inicio",
-            "groups": [
-              {
-                "group": "Primeros Pasos",
-                "pages": [
-                  "es/index",
-                  "es/inicio/introduccion",
-                  "es/inicio/arquitectura",
-                  "es/inicio/inicio-rapido",
-                  "es/inicio/entorno-local"
-                ]
-              }
+            "group": "Primeros Pasos",
+            "pages": [
+              "es/index",
+              "es/inicio/inicio-rapido",
+              "es/inicio/arquitectura"
             ]
           },
           {
-            "tab": "Guías",
-            "groups": [
-              {
-                "group": "Integración",
-                "pages": [
-                  "es/guias/autenticacion",
-                  "es/guias/multi-tenancy",
-                  "es/guias/webhooks"
-                ]
-              },
-              {
-                "group": "Referencia",
-                "pages": [
-                  "es/guias/errores",
-                  "es/guias/mejores-practicas"
-                ]
-              },
-              {
-                "group": "Desarrollo",
-                "pages": [
-                  "es/guias/depuracion",
-                  "es/guias/despliegue"
-                ]
-              },
-              {
-                "group": "Operaciones",
-                "pages": [
-                  "es/guias/operaciones-base-datos",
-                  "es/guias/debugging-ingesta"
-                ]
-              }
+            "group": "Guías",
+            "pages": [
+              "es/guias/autenticacion",
+              "es/guias/multi-tenancy",
+              "es/guias/errores",
+              "es/guias/mejores-practicas",
+              "es/guias/depuracion",
+              "es/guias/operaciones-base-datos",
+              "es/guias/debugging-ingesta",
+              "es/guias/sync-openapi-stainless"
             ]
           },
           {
-            "tab": "Servicios",
-            "groups": [
-              {
-                "group": "Core",
-                "pages": [
-                  "es/servicios/catalogo",
-                  "es/servicios/clamo-tenant",
-                  "es/servicios/clamo-cases",
-                  "es/servicios/clamo-database"
-                ]
-              },
-              {
-                "group": "Pipeline de Datos",
-                "pages": [
-                  "es/servicios/clamo-cej-connector",
-                  "es/servicios/clamo-cej-discovery",
-                  "es/servicios/clamo-ingest-go",
-                  "es/servicios/clamo-sync"
-                ]
-              },
-              {
-                "group": "Adicionales",
-                "pages": [
-                  "es/servicios/clamo-mailing",
-                  "es/servicios/clamo-dashboards",
-                  "es/servicios/ask-clamo"
-                ]
-              }
+            "group": "Servicios",
+            "pages": [
+              "es/servicios/clamo-tenant",
+              "es/servicios/clamo-cases",
+              "es/servicios/clamo-database",
+              "es/servicios/clamo-cases-cej-extractor",
+              "es/servicios/clamo-cej-discovery",
+              "es/servicios/clamo-sync",
+              "es/servicios/clamo-mailing",
+              "es/servicios/clamo-dashboards",
+              "es/servicios/ask-clamo"
             ]
           },
           {
-            "tab": "API Reference",
-            "groups": [
-              {
-                "group": "Documentación API",
-                "pages": [
-                  "es/api-reference/introduccion",
-                  "es/api-reference/autenticacion",
-                  "es/api-reference/errores"
-                ]
-              }
+            "group": "Entidades",
+            "pages": [
+              "es/entidades/index",
+              "es/entidades/company",
+              "es/entidades/user",
+              "es/entidades/stages",
+              "es/entidades/case",
+              "es/entidades/party",
+              "es/entidades/claim",
+              "es/entidades/movement",
+              "es/entidades/decision",
+              "es/entidades/case-state",
+              "es/entidades/ingest-run",
+              "es/entidades/enums"
             ]
           },
           {
-            "tab": "Arquitectura",
-            "groups": [
-              {
-                "group": "Diseño del Sistema",
-                "pages": [
-                  "es/arquitectura/modelo-datos",
-                  "es/arquitectura/pipeline-datos",
-                  "es/arquitectura/patron-rrs",
-                  "es/arquitectura/sdks-servicio",
-                  "es/arquitectura/asistentes-ia",
-                  "es/arquitectura/analiticas",
-                  "es/arquitectura/seguridad"
-                ]
-              }
+            "group": "API Reference",
+            "pages": [
+              "es/api-reference/introduccion",
+              "es/api-reference/autenticacion",
+              "es/api-reference/errores"
             ]
+          },
+          {
+            "group": "Tenant API",
+            "openapi": "api-reference/tenant/openapi.yaml"
+          },
+          {
+            "group": "Cases API",
+            "openapi": "api-reference/cases/openapi.yaml"
           }
         ]
       },
       {
         "language": "en",
-        "tabs": [
+        "groups": [
           {
-            "tab": "Home",
-            "groups": [
-              {
-                "group": "Getting Started",
-                "pages": [
-                  "en/index",
-                  "en/getting-started/introduction",
-                  "en/getting-started/architecture",
-                  "en/getting-started/quickstart",
-                  "en/getting-started/local-environment"
-                ]
-              }
+            "group": "Getting Started",
+            "pages": [
+              "en/index",
+              "en/getting-started/quickstart",
+              "en/getting-started/architecture"
             ]
           },
           {
-            "tab": "Guides",
-            "groups": [
-              {
-                "group": "Integration",
-                "pages": [
-                  "en/guides/authentication",
-                  "en/guides/multi-tenancy",
-                  "en/guides/webhooks"
-                ]
-              },
-              {
-                "group": "Reference",
-                "pages": [
-                  "en/guides/errors",
-                  "en/guides/best-practices"
-                ]
-              },
-              {
-                "group": "Development",
-                "pages": [
-                  "en/guides/debugging",
-                  "en/guides/deployment"
-                ]
-              }
+            "group": "Guides",
+            "pages": [
+              "en/guides/authentication",
+              "en/guides/multi-tenancy",
+              "en/guides/errors",
+              "en/guides/best-practices",
+              "en/guides/debugging",
+              "en/guides/sync-openapi-stainless"
             ]
           },
           {
-            "tab": "Services",
-            "groups": [
-              {
-                "group": "Core",
-                "pages": [
-                  "en/services/catalog",
-                  "en/services/clamo-tenant",
-                  "en/services/clamo-cases",
-                  "en/services/clamo-database"
-                ]
-              },
-              {
-                "group": "Data Pipeline",
-                "pages": [
-                  "en/services/clamo-cej-connector",
-                  "en/services/clamo-cej-discovery",
-                  "en/services/clamo-ingest-go",
-                  "en/services/clamo-sync"
-                ]
-              },
-              {
-                "group": "Additional",
-                "pages": [
-                  "en/services/clamo-mailing",
-                  "en/services/clamo-dashboards",
-                  "en/services/ask-clamo"
-                ]
-              }
+            "group": "Services",
+            "pages": [
+              "en/services/clamo-tenant",
+              "en/services/clamo-cases",
+              "en/services/clamo-database",
+              "en/services/clamo-cases-cej-extractor",
+              "en/services/clamo-cej-discovery",
+              "en/services/clamo-sync",
+              "en/services/clamo-mailing",
+              "en/services/clamo-dashboards",
+              "en/services/ask-clamo"
             ]
           },
           {
-            "tab": "API Reference",
-            "groups": [
-              {
-                "group": "API Documentation",
-                "pages": [
-                  "en/api-reference/introduction",
-                  "en/api-reference/authentication",
-                  "en/api-reference/errors"
-                ]
-              }
+            "group": "Entities",
+            "pages": [
+              "en/entities/index",
+              "en/entities/company",
+              "en/entities/user",
+              "en/entities/stages",
+              "en/entities/case",
+              "en/entities/party",
+              "en/entities/claim",
+              "en/entities/movement",
+              "en/entities/decision",
+              "en/entities/case-state",
+              "en/entities/ingest-run",
+              "en/entities/enums"
             ]
           },
           {
-            "tab": "Architecture",
-            "groups": [
-              {
-                "group": "System Design",
-                "pages": [
-                  "en/architecture/data-model",
-                  "en/architecture/data-pipeline",
-                  "en/architecture/rrs-pattern",
-                  "en/architecture/service-sdks",
-                  "en/architecture/ai-assistants",
-                  "en/architecture/analytics",
-                  "en/architecture/security"
-                ]
-              }
+            "group": "API Reference",
+            "pages": [
+              "en/api-reference/introduction",
+              "en/api-reference/authentication",
+              "en/api-reference/errors"
             ]
+          },
+          {
+            "group": "Tenant API",
+            "openapi": "api-reference/tenant/openapi.yaml"
+          },
+          {
+            "group": "Cases API",
+            "openapi": "api-reference/cases/openapi.yaml"
           }
         ]
       }
     ]
   },
-  "openapi": [
-    "api-reference/tenant/openapi.yaml",
-    "api-reference/cases/openapi.yaml"
-  ],
   "footer": {
     "socials": {
       "github": "https://github.com/GetClamo"

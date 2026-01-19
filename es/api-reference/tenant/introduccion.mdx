@@ -1,0 +1,118 @@
+---
+title: API de Tenant
+description: API para gestion de empresas, usuarios y configuracion multi-tenant
+---
+
+# API de Tenant
+
+La API de Tenant proporciona endpoints para gestionar empresas (tenants), usuarios y configuracion multi-tenant en la plataforma Clamo.
+
+## Vision General
+
+Esta API maneja:
+
+- **Operaciones de Usuario**: Obtener informacion del usuario actual y completar onboarding
+- **Gestion de Empresas**: Crear, actualizar y eliminar empresas (solo admin)
+- **Invitaciones de Usuario**: Invitar usuarios a unirse a una empresa
+
+## URL Base
+
+| Entorno | URL |
+|---------|-----|
+| Produccion | `https://api.clamo.dev` |
+| Staging | `https://staging-api.clamo.dev` |
+| Local | `http://localhost:4001` |
+
+## Autenticacion
+
+Todos los endpoints publicos requieren autenticacion via WorkOS. Incluye tu token de acceso en el header `Authorization`:
+
+```bash
+Authorization: Bearer <tu-token-de-acceso>
+```
+
+<Note>
+Los endpoints de admin (`/v1/admin/*`) requieren el rol `admin` dentro de tu organizacion.
+</Note>
+
+## Endpoints Disponibles
+
+### Endpoints de Usuario
+
+| Metodo | Endpoint | Descripcion |
+|--------|----------|-------------|
+| GET | `/v1/me` | Obtener usuario autenticado actual |
+| GET | `/v1/me/company` | Obtener la empresa del usuario |
+| PATCH | `/v1/me/onboarding` | Completar onboarding del usuario |
+
+### Endpoints de Admin
+
+| Metodo | Endpoint | Descripcion |
+|--------|----------|-------------|
+| POST | `/v1/admin/companies` | Crear una nueva empresa |
+| GET | `/v1/admin/companies` | Listar todas las empresas |
+| GET | `/v1/admin/companies/{id}` | Obtener detalles de empresa |
+| PATCH | `/v1/admin/companies/{id}` | Actualizar una empresa |
+| DELETE | `/v1/admin/companies/{id}` | Eliminar una empresa |
+| POST | `/v1/admin/companies/{id}/invite` | Invitar un usuario a una empresa |
+
+## Inicio Rapido
+
+### Obtener Usuario Actual
+
+```bash
+curl -X GET https://api.clamo.dev/v1/me \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Crear una Empresa (Admin)
+
+```bash
+curl -X POST https://api.clamo.dev/v1/admin/companies \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Mi Empresa S.A.C.",
+    "ownerEmail": "admin@miempresa.com",
+    "plan": "pro"
+  }'
+```
+
+## SDKs
+
+SDKs oficiales estan disponibles para facil integracion:
+
+<CodeGroup>
+```bash TypeScript
+npm install @getclamo/tenant
+# o
+pnpm add @getclamo/tenant
+```
+
+```bash Python
+pip install getclamo-tenant
+```
+
+```bash Rust
+cargo add clamo-tenant-sdk
+```
+</CodeGroup>
+
+## Proximos Pasos
+
+<CardGroup cols={2}>
+  <Card
+    title="Autenticacion"
+    icon="key"
+    href="/es/api-reference/autenticacion"
+  >
+    Aprende sobre metodos de autenticacion.
+  </Card>
+  <Card
+    title="Manejo de Errores"
+    icon="triangle-exclamation"
+    href="/es/api-reference/errores"
+  >
+    Entiende las respuestas de error.
+  </Card>
+</CardGroup>

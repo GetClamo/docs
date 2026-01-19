@@ -1,0 +1,139 @@
+---
+title: "Stages"
+description: "Stage, SubStage, and Milestone entities for procedural classification reference data"
+---
+
+The **Stage**, **SubStage**, and **Milestone** entities form a hierarchical reference data system for classifying legal proceedings. This three-level taxonomy enables consistent categorization of case movements across the Peruvian judicial process.
+
+## Overview
+
+The stage hierarchy represents the procedural phases of a legal case:
+
+```mermaid
+flowchart TB
+    subgraph Stage["Stage (Etapa)"]
+        direction TB
+        S1["POSTULACION"]
+        S2["ACTUACION_PROBATORIA"]
+        S3["DECISION"]
+        S4["IMPUGNACION"]
+        S5["EJECUCION"]
+    end
+
+    subgraph SubStage["SubStage (Sub-etapa)"]
+        SS1["DEMANDA"]
+        SS2["CONTESTACION"]
+        SS3["AUDIENCIA"]
+    end
+
+    subgraph Milestone["Milestone (Hito)"]
+        M1["ADMISION_DEMANDA"]
+        M2["AUTO_SANEAMIENTO"]
+        M3["SENTENCIA"]
+    end
+
+    S1 --> SS1
+    S1 --> SS2
+    S2 --> SS3
+    SS1 --> M1
+    SS1 --> M2
+    S3 --> M3
+```
+
+<Note>
+  Stage reference data is stored in the **Control Plane** database (Supabase) and shared across all tenants. Movement classification codes in tenant databases reference this shared taxonomy.
+</Note>
+
+## Stage
+
+Stages represent the macro phases of a legal process.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `code` | `string` | Unique identifier (PK) |
+| `name` | `string` | Human-readable stage name |
+| `sortOrder` | `int` | Display/workflow order |
+| `description` | `string?` | Detailed description |
+| `isDecision` | `boolean` | True if stage contains decisions |
+
+### Common Stages
+
+| Code | Name | Description |
+|------|------|-------------|
+| `POSTULACION` | Postulacion | Initial filing phase |
+| `ACTUACION_PROBATORIA` | Actuacion Probatoria | Evidence presentation |
+| `DECISION` | Decision | Judgment phase |
+| `IMPUGNACION` | Impugnacion | Appeals phase |
+| `EJECUCION` | Ejecucion | Enforcement phase |
+
+## SubStage
+
+SubStages represent phases within a stage. They use a composite primary key of `(stageCode, code)`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stageCode` | `string` | References parent Stage.code |
+| `code` | `string` | SubStage identifier |
+| `name` | `string` | Human-readable name |
+| `sortOrder` | `int` | Order within parent stage |
+| `description` | `string?` | Detailed description |
+
+## Milestone
+
+Milestones are specific events within a sub-stage. They use a composite primary key of `(stageCode, subStageCode, code)`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `stageCode` | `string` | References Stage.code |
+| `subStageCode` | `string` | References SubStage.code |
+| `code` | `string` | Milestone identifier |
+| `label` | `string` | Human-readable label |
+| `isDecision` | `boolean` | True if milestone is a decision point |
+
+<Warning>
+  Stages are in the Control Plane, but movements are in tenant databases. There are no foreign keys between them. Application code must validate stage references.
+</Warning>
+
+## Entity Relationships
+
+```mermaid
+erDiagram
+    Stage ||--o{ SubStage : "has many"
+    SubStage ||--o{ Milestone : "has many"
+
+    Stage {
+        string code PK
+        string name
+        int sortOrder
+        boolean isDecision
+    }
+
+    SubStage {
+        string stageCode PK,FK
+        string code PK
+        string name
+        int sortOrder
+    }
+
+    Milestone {
+        string stageCode PK,FK
+        string subStageCode PK,FK
+        string code PK
+        string label
+        boolean isDecision
+    }
+```
+
+## Related Entities
+
+<CardGroup cols={2}>
+  <Card title="Movement" icon="timeline" href="/en/entities/movement">
+    Movements reference stage codes
+  </Card>
+  <Card title="Case State" icon="chart-line" href="/en/entities/case-state">
+    Current stage tracked in state
+  </Card>
+  <Card title="Decision" icon="gavel" href="/en/entities/decision">
+    Decision milestones trigger detection
+  </Card>
+</CardGroup>

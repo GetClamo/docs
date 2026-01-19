@@ -1,0 +1,118 @@
+---
+title: Tenant API
+description: API for company management, users, and multi-tenant configuration
+---
+
+# Tenant API
+
+The Tenant API provides endpoints for managing companies (tenants), users, and multi-tenant configuration in the Clamo platform.
+
+## Overview
+
+This API handles:
+
+- **User Operations**: Get current user information and complete onboarding
+- **Company Management**: Create, update, and delete companies (admin only)
+- **User Invitations**: Invite users to join a company
+
+## Base URL
+
+| Environment | URL |
+|-------------|-----|
+| Production | `https://api.clamo.dev` |
+| Staging | `https://staging-api.clamo.dev` |
+| Local | `http://localhost:4001` |
+
+## Authentication
+
+All public endpoints require authentication via WorkOS. Include your access token in the `Authorization` header:
+
+```bash
+Authorization: Bearer <your-access-token>
+```
+
+<Note>
+Admin endpoints (`/v1/admin/*`) require the `admin` role within your organization.
+</Note>
+
+## Available Endpoints
+
+### User Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/v1/me` | Get current authenticated user |
+| GET | `/v1/me/company` | Get the user's company |
+| PATCH | `/v1/me/onboarding` | Complete user onboarding |
+
+### Admin Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/v1/admin/companies` | Create a new company |
+| GET | `/v1/admin/companies` | List all companies |
+| GET | `/v1/admin/companies/{id}` | Get company details |
+| PATCH | `/v1/admin/companies/{id}` | Update a company |
+| DELETE | `/v1/admin/companies/{id}` | Delete a company |
+| POST | `/v1/admin/companies/{id}/invite` | Invite a user to a company |
+
+## Quick Start
+
+### Get Current User
+
+```bash
+curl -X GET https://api.clamo.dev/v1/me \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+### Create a Company (Admin)
+
+```bash
+curl -X POST https://api.clamo.dev/v1/admin/companies \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Company S.A.C.",
+    "ownerEmail": "admin@mycompany.com",
+    "plan": "pro"
+  }'
+```
+
+## SDKs
+
+Official SDKs are available for easy integration:
+
+<CodeGroup>
+```bash TypeScript
+npm install @getclamo/tenant
+# or
+pnpm add @getclamo/tenant
+```
+
+```bash Python
+pip install getclamo-tenant
+```
+
+```bash Rust
+cargo add clamo-tenant-sdk
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Authentication"
+    icon="key"
+    href="/en/api-reference/authentication"
+  >
+    Learn about authentication methods.
+  </Card>
+  <Card
+    title="Error Handling"
+    icon="triangle-exclamation"
+    href="/en/api-reference/errors"
+  >
+    Understand error responses.
+  </Card>
+</CardGroup>

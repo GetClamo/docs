@@ -3,8 +3,6 @@ title: clamo-database
 description: Prisma schemas, migrations, and multi-tenant connection management
 ---
 
-# clamo-database
-
 Shared package containing Prisma schemas, migrations, and utilities for multi-tenant connection management.
 
 ## General Information
@@ -22,455 +20,223 @@ Shared package containing Prisma schemas, migrations, and utilities for multi-te
 ```mermaid
 flowchart TB
     subgraph Package [@getclamo/database]
-        ControlSchema[Control Schema<br/>schema.control.prisma]
-        TenantSchema[Tenant Schema<br/>schema.tenant.prisma]
+        ControlSchema[Control Schema]
+        TenantSchema[Tenant Schema]
         ClientFactory[Client Factory]
         LRUCache[LRU Cache]
     end
-    
-    subgraph Scripts [Migration Scripts]
-        MigrateControl[migrate:control]
-        MigrateTenants[migrate:tenants]
-    end
-    
+
     subgraph Databases [Databases]
         Supabase[(Supabase<br/>Control Plane)]
         Neon1[(Neon Tenant 1)]
         Neon2[(Neon Tenant 2)]
         NeonN[(Neon Tenant N)]
     end
-    
+
     ControlSchema --> Supabase
     TenantSchema --> Neon1
     TenantSchema --> Neon2
     TenantSchema --> NeonN
-    
+
     ClientFactory --> LRUCache
     LRUCache --> Neon1
     LRUCache --> Neon2
     LRUCache --> NeonN
-    
-    MigrateControl --> Supabase
-    MigrateTenants --> Neon1
-    MigrateTenants --> Neon2
-    MigrateTenants --> NeonN
 ```
 
-## Directory Structure
+## Control Plane Schema
 
-```
-clamo-database/
-├── prisma/
-│   ├── schema.control.prisma    # Control plane schema
-│   ├── schema.tenant.prisma     # Tenant schema
-│   └── migrations/
-│       ├── control/             # Control migrations
-│       └── tenant/              # Tenant migrations
-├── scripts/
-│   ├── migrate-control.ts       # Control plane migration
-│   ├── migrate-tenants.ts       # Mass tenant migration
-│   └── dry-run.ts               # Dry run with Docker
-├── src/
-│   ├── index.ts                 # Exports
-│   ├── control.ts               # Control client
-│   ├── tenant.ts                # Tenant client factory
-│   └── cache.ts                 # LRU cache
-└── package.json
-```
+```mermaid
+erDiagram
+    Company ||--o{ User : has
+    Company ||--o| CompanyDatabase : has
+    Company ||--o{ Company : parent
 
-## Schemas
+    Company {
+        uuid id PK
+        string workosOrgId UK
+        string name
+        string ruc
+        uuid parentId FK
+        string plan
+        enum databaseStatus
+        string billingEmail
+        json settings
+        json features
+    }
 
-### Control Schema (Supabase)
+    CompanyDatabase {
+        uuid id PK
+        uuid companyId FK,UK
+        string neonProjectId
+        string neonBranchId
+        string databaseName
+        string databaseHost
+        string pooledConnSecretId
+        string directConnSecretId
+    }
 
-```prisma
-// prisma/schema.control.prisma
-datasource db {
-  provider = "postgresql"
-  url      = env("CONTROL_DATABASE_URL")
-}
+    User {
+        uuid id PK
+        string workosUserId UK
+        string email UK
+        string firstName
+        string lastName
+        uuid companyId FK
+        string role
+        enum onboardingState
+    }
 
-model Company {
-  id             String    @id @default(uuid())
-  workosOrgId    String    @unique
-  name           String
-  ruc            String?
-  parentId       String?
-  plan           Plan      @default(free)
-  settings       Json      @default("{}")
-  metadata       Json      @default("{}")
-  databaseStatus DatabaseStatus @default(pending)
-  ownerEmail     String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+    Stage ||--o{ SubStage : has
+    SubStage ||--o{ Milestone : has
 
-  parent         Company?  @relation("CompanyHierarchy", fields: [parentId], references: [id])
-  children       Company[] @relation("CompanyHierarchy")
-  users          User[]
-  database       CompanyDatabase?
-}
+    Stage {
+        string code PK
+        string name
+        int sortOrder
+        boolean isDecision
+    }
 
-model CompanyDatabase {
-  id                  String   @id @default(uuid())
-  companyId           String   @unique
-  neonProjectId       String
-  neonBranchId        String
-  neonEndpointId      String?
-  databaseName        String
-  databaseHost        String
-  databaseUser        String
-  pooledConnSecretId  String   // Supabase Vault secret ID
-  directConnSecretId  String   // Supabase Vault secret ID
-  status              DbStatus @default(active)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+    SubStage {
+        string stageCode PK,FK
+        string code PK
+        string name
+        int sortOrder
+    }
 
-  company             Company  @relation(fields: [companyId], references: [id])
-}
-
-model User {
-  id              String   @id @default(uuid())
-  workosUserId    String   @unique
-  email           String
-  firstName       String?
-  lastName        String?
-  companyId       String
-  role            Role     @default(member)
-  onboardingState OnboardingState @default(pending_onboarding)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  company         Company  @relation(fields: [companyId], references: [id])
-}
-
-enum Plan {
-  free
-  pro
-  enterprise
-}
-
-enum DatabaseStatus {
-  pending
-  provisioning
-  ready
-  failed
-}
-
-enum DbStatus {
-  active
-  suspended
-  deleted
-}
-
-enum Role {
-  admin
-  member
-}
-
-enum OnboardingState {
-  pending_onboarding
-  completed
-}
+    Milestone {
+        string stageCode PK,FK
+        string subStageCode PK,FK
+        string code PK
+        string label
+        boolean isDecision
+    }
 ```
 
-### Tenant Schema (Neon)
+## Tenant Schema
 
-```prisma
-// prisma/schema.tenant.prisma
-datasource db {
-  provider = "postgresql"
-  url      = env("TENANT_DATABASE_URL")
-}
+```mermaid
+erDiagram
+    Case ||--o{ Party : has
+    Case ||--o{ CaseClaim : has
+    Case ||--o{ Movement : has
+    Case ||--o{ Decision : has
+    Case ||--|| CaseState : has
+    Case ||--o{ CaseIngestRun : has
 
-model Case {
-  id                  String    @id @default(uuid())
-  companyId           String
-  caseNumber          String
-  filingDate          DateTime?
-  
-  // SourcedValue fields stored as JSONB: { cej, ai, manual, updatedAt }
-  subjectMatter       Json?     @default("[]")  // Array of SourcedValue
-  processType         Json?                      // SourcedValue
-  stage               Json?                      // SourcedValue
-  abstract            Json?                      // SourcedValue (Sumilla)
-  observation         Json?                      // SourcedValue
-  conclusionReason    Json?                      // SourcedValue
-  
-  // CEJ-sourced fields (direct values)
-  cejJudicialDistrict String?
-  court               String?
-  judge               String?
-  
-  // Metadata
-  source              ClaimSource @default(CEJ)
-  status              CaseStatus  @default(ACTIVE)
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
+    Case {
+        uuid id PK
+        string companyId
+        string caseNumber
+        datetime filingDate
+        json subjectMatter
+        json processType
+        json stage
+        string court
+        string judge
+    }
 
-  movements           Movement[]
-  decisions           Decision[]
-  parties             Party[]
-  ingestRuns          CaseIngestRun[]
-  
-  @@unique([caseNumber, companyId])
-  @@index([companyId])
-  @@index([status])
-}
+    Party {
+        uuid id PK
+        uuid caseId FK
+        string name
+        enum type
+        enum role
+    }
 
-model Movement {
-  id              String    @id @default(uuid())
-  caseId          String
-  movementNumber  Int
-  date            DateTime
-  description     String
-  resolutionType  String?
-  
-  // SourcedValue fields
-  summary         Json?     // SourcedValue
-  
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+    CaseClaim {
+        uuid id PK
+        uuid caseId FK
+        enum claimType
+        decimal amount
+        string currency
+        enum source
+    }
 
-  case            Case      @relation(fields: [caseId], references: [id])
-  
-  @@unique([caseId, movementNumber])
-  @@index([caseId])
-}
+    Movement ||--o{ MovementAttachment : has
+    Movement ||--o{ MovementNotification : has
+    Movement ||--o| Decision : has
 
-model Decision {
-  id              String    @id @default(uuid())
-  caseId          String
-  movementId      String?
-  decisionType    String
-  date            DateTime
-  content         String?
-  
-  // SourcedValue fields
-  summary         Json?     // SourcedValue
-  
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+    Movement {
+        uuid id PK
+        uuid caseId FK
+        int stablePosition
+        datetime cejEventDate
+        string cejActo
+        string cejResolution
+        json name
+        json summary
+        string stageCode
+        string subStageCode
+        string milestoneCode
+    }
 
-  case            Case      @relation(fields: [caseId], references: [id])
-  
-  @@index([caseId])
-}
+    MovementAttachment {
+        uuid id PK
+        uuid movementId FK
+        string cejNid UK
+        string kind
+        string url
+        enum state
+    }
 
-model Party {
-  id              String    @id @default(uuid())
-  caseId          String
-  partyType       PartyType
-  name            String
-  documentType    String?
-  documentNumber  String?
-  
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+    MovementNotification {
+        uuid id PK
+        uuid movementId FK
+        string destinatario
+        datetime fechaEnvio
+        string formaEntrega
+    }
 
-  case            Case      @relation(fields: [caseId], references: [id])
-  
-  @@index([caseId])
-}
+    Decision {
+        uuid id PK
+        uuid caseId FK
+        uuid movementId FK,UK
+        enum scope
+        datetime decidedAt
+        enum instanceResult
+        enum defendantOutcome
+        decimal amountPrincipal
+    }
 
-model CaseIngestRun {
-  id              String          @id @default(uuid())
-  caseId          String
-  expediente      String
-  source          IngestSource
-  status          IngestStatus    @default(RUNNING)
-  movementsCount  Int             @default(0)
-  error           String?
-  startedAt       DateTime        @default(now())
-  completedAt     DateTime?
+    CaseState {
+        uuid caseId PK,FK
+        uuid lastMovementId
+        string currentStageCode
+        boolean isArchived
+        enum archiveType
+        enum finalStatus
+        enum defendantOutcome
+    }
 
-  case            Case            @relation(fields: [caseId], references: [id])
-  
-  @@index([caseId])
-  @@index([status])
-}
+    CaseIngestRun {
+        uuid id PK
+        uuid caseId FK
+        string expediente
+        string manifestHash
+        enum status
+    }
 
-enum ClaimSource {
-  CEJ
-  AI
-  MANUAL
-}
-
-enum CaseStatus {
-  ACTIVE
-  ARCHIVED
-  CONCLUDED
-}
-
-enum PartyType {
-  PLAINTIFF
-  DEFENDANT
-  THIRD_PARTY
-}
-
-enum IngestSource {
-  CEJ_CONNECTOR
-  CEJ_DISCOVERY
-  MANUAL_UPLOAD
-}
-
-enum IngestStatus {
-  RUNNING
-  MOVEMENTS_COMPLETE
-  ANALYSIS_COMPLETE
-  COMPLETED
-  FAILED
-}
-```
-
-## Connection Management
-
-### LRU Cache
-
-```typescript
-// src/cache.ts
-import { LRUCache } from "lru-cache";
-import { PrismaClient } from "@prisma/client";
-
-const cache = new LRUCache<string, PrismaClient>({
-  max: 50,
-  ttl: 1000 * 60 * 30, // 30 minutes
-  dispose: async (client) => {
-    await client.$disconnect();
-  },
-});
-
-export async function getTenantClient(
-  connectionString: string
-): Promise<PrismaClient> {
-  const cacheKey = hashConnectionString(connectionString);
-  
-  let client = cache.get(cacheKey);
-  
-  if (!client) {
-    client = new PrismaClient({
-      datasources: {
-        db: { url: connectionString },
-      },
-    });
-    await client.$connect();
-    cache.set(cacheKey, client);
-  }
-  
-  return client;
-}
-```
-
-### Tenant Client Factory
-
-```typescript
-// src/tenant.ts
-import { TenantClient } from "@getclamo/tenant-sdk";
-import { getTenantClient } from "./cache";
-
-export async function createTenantPrisma(
-  tenantSdk: TenantClient,
-  companyId: string
-): Promise<PrismaClient> {
-  // Get connection from clamo-tenant (source of truth)
-  const { connectionString } = await tenantSdk.internal
-    .companies(companyId)
-    .database.get();
-  
-  // Get or create cached client
-  return getTenantClient(connectionString);
-}
-```
-
-## Migration Scripts
-
-### Control Plane Migration
-
-```bash
-# Migrate control database
-pnpm migrate:control
-
-# With specific environment
-DATABASE_URL=postgresql://... pnpm migrate:control
-```
-
-### Mass Tenant Migration
-
-```bash
-# Migrate all active tenants
-pnpm migrate:tenants
-
-# Dry run (uses Docker container)
-pnpm migrate:tenants --dry-run
-
-# Specific tenant
-pnpm migrate:tenants --company-id=cmp_abc123
-```
-
-### Dry Run Implementation
-
-```typescript
-// scripts/dry-run.ts
-import { GenericContainer } from "testcontainers";
-
-export async function createDryRunContainer(): Promise<{
-  connectionString: string;
-  cleanup: () => Promise<void>;
-}> {
-  const container = await new GenericContainer("postgres:15")
-    .withEnvironment({
-      POSTGRES_USER: "test",
-      POSTGRES_PASSWORD: "test",
-      POSTGRES_DB: "test",
-    })
-    .withExposedPorts(5432)
-    .start();
-
-  const connectionString = `postgresql://test:test@${container.getHost()}:${container.getMappedPort(5432)}/test`;
-
-  return {
-    connectionString,
-    cleanup: async () => {
-      await container.stop();
-    },
-  };
-}
+    Dashboard {
+        uuid id PK
+        string companyId
+        string name
+        json config
+        boolean isDefault
+    }
 ```
 
 ## Usage
 
-### Installation
-
-```bash
-pnpm add @getclamo/database
-```
-
-### Control Client
-
 ```typescript
-import { controlDb } from "@getclamo/database";
+import { controlDb, createTenantPrisma } from "@getclamo/database";
 
-// Query control plane
-const companies = await controlDb.company.findMany({
-  where: { databaseStatus: "ready" },
-});
-```
+// Control plane client (singleton)
+const companies = await controlDb.company.findMany();
 
-### Tenant Client
-
-```typescript
-import { createTenantPrisma } from "@getclamo/database";
-import { TenantClient } from "@getclamo/tenant-sdk";
-
-const tenantSdk = new TenantClient({
-  baseUrl: process.env.TENANT_SERVICE_URL,
-});
-
-// Get tenant client (cached)
-const tenantDb = await createTenantPrisma(tenantSdk, companyId);
-
-// Query tenant database
-const cases = await tenantDb.case.findMany({
-  where: { status: "ACTIVE" },
-});
+// Tenant client (cached by connection)
+const tenantDb = createTenantPrisma(connectionString);
+const cases = await tenantDb.case.findMany();
 ```
 
 ## Configuration
@@ -481,12 +247,12 @@ const cases = await tenantDb.case.findMany({
 # Control database
 CONTROL_DATABASE_URL=postgresql://...
 
-# Tenant SDK (for connection resolution)
-TENANT_SERVICE_URL=http://localhost:4001
-
-# Supabase (for Vault access)
+# Supabase (for Vault)
 SUPABASE_URL=https://...
 SUPABASE_SERVICE_KEY=...
+
+# For local development with specific tenant
+TENANT_DATABASE_URL=postgresql://...
 ```
 
 ## Local Development
@@ -501,22 +267,22 @@ pnpm db:generate
 # Run control migrations
 pnpm migrate:control
 
+# Run tenant migrations (all tenants)
+pnpm migrate:tenants
+
 # Build package
 pnpm build
-
-# Run tests
-pnpm test
 ```
 
 ## Next Steps
 
 <CardGroup cols={2}>
   <Card
-    title="Data Model"
+    title="Entities"
     icon="database"
-    href="/en/architecture/data-model"
+    href="/en/entities/index"
   >
-    SourcedValue pattern documentation.
+    Complete entity reference.
   </Card>
   <Card
     title="Multi-Tenancy"

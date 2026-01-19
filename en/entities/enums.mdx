@@ -1,0 +1,171 @@
+---
+title: "Enums"
+description: "Complete reference for all enumeration types across Control Plane and Tenant databases"
+---
+
+This page documents all enumeration types used in Clamo's database schemas. Enums are divided between the **Control Plane** (Supabase) and **Tenant** (Neon) databases.
+
+## Control Plane Enums
+
+### DatabaseStatus
+
+Tracks the provisioning state of a company's Neon database branch.
+
+| Value | Description |
+|-------|-------------|
+| `PENDING` | Company created, database not yet provisioned |
+| `PROVISIONING` | Neon API called, waiting for completion |
+| `READY` | Database available for tenant connections |
+| `ERROR` | Provisioning failed, requires intervention |
+
+### OnboardingState
+
+Tracks user progress through the onboarding workflow.
+
+| Value | Description |
+|-------|-------------|
+| `PENDING_ORG` | User authenticated but not associated with a company |
+| `PENDING_PROFILE` | User has company but profile incomplete |
+| `COMPLETE` | Full access granted |
+
+## Tenant Enums
+
+### PartyType
+
+Classifies the legal entity type of a case party.
+
+| Value | Description | Example |
+|-------|-------------|---------|
+| `NATURAL` | Individual person | "Juan Perez Garcia" |
+| `JURIDICA` | Corporation or organization | "Empresa ABC S.A.C." |
+| `UNKNOWN` | Unclassified (needs review) | Unprocessed CEJ data |
+
+### PartyRole
+
+Defines the role of a party in legal proceedings.
+
+| Value | Spanish | Description |
+|-------|---------|-------------|
+| `PLAINTIFF` | Demandante | Party bringing the lawsuit |
+| `DEFENDANT` | Demandado | Party defending against claims |
+| `THIRD_PARTY` | Tercero | Intervening or joined party |
+| `OTHER` | Otro | Witnesses, experts, etc. |
+
+### ClaimType
+
+Categorizes the type of legal claim.
+
+| Value | Description | Key Fields |
+|-------|-------------|------------|
+| `REINSTATEMENT` | Employee seeks job restoration | `position` |
+| `ACTION_NULLITY` | Seeks to nullify an action | `actionDescription` |
+| `COMPENSATION` | Monetary damages | `amount`, `currency` |
+| `OTHER` | Miscellaneous claims | `description` |
+
+### ClaimSource
+
+Identifies the origin of claim data.
+
+| Value | Description | Reliability |
+|-------|-------------|-------------|
+| `CEJ` | Official court records | Authoritative but may be incomplete |
+| `AI` | AI-extracted from documents | High accuracy, needs verification |
+| `MANUAL` | User-entered data | User-verified |
+
+### AttachmentState
+
+Tracks the download state of movement attachments.
+
+| Value | Description |
+|-------|-------------|
+| `PENDING` | Queued for download |
+| `DOWNLOADED` | Content stored, ready for AI extraction |
+| `FAILED` | Download error occurred |
+| `NOT_AVAILABLE` | Source document missing |
+
+### DecisionScope
+
+Identifies the court instance level of a decision.
+
+| Value | Spanish | Court Level |
+|-------|---------|-------------|
+| `FIRST_INSTANCE` | Primera Instancia | Juzgado |
+| `SECOND_INSTANCE` | Segunda Instancia | Sala Superior |
+| `CASSATION` | Casacion | Corte Suprema |
+
+### InstanceResult
+
+Captures the legal determination of a court decision.
+
+| Result | Description |
+|--------|-------------|
+| `FUNDADA` | Claim upheld (plaintiff wins) |
+| `INFUNDADA` | Claim rejected on merits |
+| `IMPROCEDENTE` | Claim procedurally inadmissible |
+| `CONFIRMA` | Lower decision confirmed |
+| `REVOCA` | Lower decision reversed |
+| `ANULA` | Lower decision nullified |
+| `FUNDADO` | Appeal/motion upheld |
+| `INFUNDADO` | Appeal/motion rejected |
+| `INADMISIBLE` | Procedurally rejected |
+| `OTRO` | Other determination |
+
+### DefendantOutcome
+
+Simplified binary outcome from the defendant's perspective.
+
+| Value | Description |
+|-------|-------------|
+| `FAVORABLE` | Defendant wins (INFUNDADA, IMPROCEDENTE) |
+| `DESFAVORABLE` | Defendant loses (FUNDADA) |
+
+<Note>
+  In labor cases where the company is typically the defendant, `FAVORABLE` means the employee's claim was rejected, and `DESFAVORABLE` means the employee won.
+</Note>
+
+### EstadoFinal
+
+Final status classification for concluded cases.
+
+| Value | Description |
+|-------|-------------|
+| `GIRO` | Payment/execution completed |
+| `ARCHIVO_DEFINITIVO` | Case permanently closed |
+| `PENDIENTE` | Awaiting final resolution |
+
+### ArchiveType
+
+Distinguishes between temporary and permanent case archives.
+
+| Value | Description |
+|-------|-------------|
+| `PROVISIONAL` | Temporarily archived, can be reactivated |
+| `DEFINITIVE` | Permanently closed |
+
+### CaseIngestRunStatus
+
+Tracks the progress of a data ingestion run.
+
+| Value | Description |
+|-------|-------------|
+| `RUNNING` | Scraping/parsing in progress |
+| `FAILED` | Error during processing |
+| `MOVEMENTS_COMPLETE` | Raw data saved, ready for AI |
+| `ANALYSIS_COMPLETE` | Full processing done |
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Company" icon="building" href="/en/entities/company">
+    Uses DatabaseStatus
+  </Card>
+  <Card title="User" icon="user" href="/en/entities/user">
+    Uses OnboardingState
+  </Card>
+  <Card title="Party" icon="users" href="/en/entities/party">
+    Uses PartyType, PartyRole
+  </Card>
+  <Card title="Decision" icon="gavel" href="/en/entities/decision">
+    Uses DecisionScope, InstanceResult, DefendantOutcome
+  </Card>
+</CardGroup>

@@ -3,8 +3,6 @@ title: clamo-cases
 description: Legal case management service with RRS pattern and Trusted Sources
 ---
 
-# clamo-cases
-
 Main service for managing legal cases, procedural movements, decisions, and associated documents. Implements the **RRS (Repository-Route-Service)** pattern and the **Trusted Sources** model for multi-origin data.
 
 ## General Information
@@ -18,7 +16,7 @@ Main service for managing legal cases, procedural movements, decisions, and asso
 | **Database** | Neon PostgreSQL (multi-tenant) |
 | **ORM** | Prisma (`@getclamo/database`) |
 
-## RRS Architecture
+## Architecture
 
 The service strictly follows the **Repository-Route-Service** pattern:
 
@@ -60,35 +58,6 @@ flowchart TB
     Tenant --> CasesRoute
 ```
 
-## Directory Structure
-
-```
-clamo-cases/src/
-├── routes/              # Route Layer - Only Zod validation and JSON response
-│   ├── cases.ts
-│   ├── movements.ts
-│   ├── decisions.ts
-│   ├── parties.ts
-│   ├── ingest-runs.ts
-│   └── stages.ts
-├── services/            # Service Layer - Business logic and Trusted Source
-│   ├── case.service.ts
-│   ├── movement.service.ts
-│   ├── decision.service.ts
-│   └── ingest-run.service.ts
-├── repositories/        # Repository Layer - Only Prisma queries
-│   ├── case.repository.ts
-│   ├── movement.repository.ts
-│   ├── decision.repository.ts
-│   └── ingest-run.repository.ts
-├── middleware/          # Auth and tenant resolution
-│   ├── auth.ts          # Parses x-workos-* headers
-│   └── tenant.ts        # Resolves tenant connection
-├── mappers/             # Data transformation
-├── schemas/             # Zod schemas
-└── clients/sdk/         # Tenant SDK for internal calls
-```
-
 ## Authentication
 
 The service uses `x-workos-*` headers injected by Kong after validating the JWT:
@@ -105,172 +74,21 @@ const permissionsHeader = headers.get("x-workos-permissions");
 **In local development:** Without Kong, you must pass these headers manually in your requests.
 </Note>
 
-## Data Model with Trusted Sources
+## Data Model
 
-Critical fields use the **SourcedValue** pattern (JSONB) to track data origin:
+<Info>
+For complete entity documentation including Case, Movement, Decision, and all related entities, see the [Entities](/en/entities/case) section.
+</Info>
 
-```typescript
-// SourcedValue structure in the database
-interface SourcedValue<T> {
-  cej: T | null;      // Value from CEJ scraper
-  ai: T | null;       // Value normalized by AI
-  manual: T | null;   // Value corrected by human
-  updatedAt?: {
-    cej?: string;
-    ai?: string;
-    manual?: string;
-  };
-}
+<Info>
+The SourcedValue pattern (Trusted Sources) is used for multi-origin data. Fields can have values from CEJ, AI, and manual sources with priority: manual > ai > cej.
+</Info>
 
-// Fields using SourcedValue in Case
-interface Case {
-  id: string;
-  caseNumber: string;
-  companyId: string;
-  filingDate: Date | null;
-  
-  // SourcedValue fields (JSONB)
-  subjectMatter: SourcedValue<string[]>;  // Subject matters
-  processType: SourcedValue<string>;      // Process type
-  stage: SourcedValue<string>;            // Stage
-  abstract: SourcedValue<string>;         // Summary
-  observation: SourcedValue<string>;
-  conclusionReason: SourcedValue<string>;
-  
-  // CEJ-sourced fields (direct string)
-  cejJudicialDistrict: string | null;
-  court: string | null;
-  judge: string | null;
-  // ...
-}
-```
+## API Endpoints
 
-### Value Resolution
-
-```typescript
-// services/case.service.ts
-function resolveValue<T>(sourced: SourcedValue<T>): T | null {
-  // Priority: manual > ai > cej
-  return sourced.manual ?? sourced.ai ?? sourced.cej ?? null;
-}
-```
-
-## Main Endpoints
-
-### Cases
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/v1/cases` | List cases with filters |
-| GET | `/v1/cases/:id` | Get case detail |
-| PATCH | `/v1/cases/:id` | Update case |
-
-### Movements
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/v1/cases/:caseId/movements` | List movements |
-| GET | `/v1/cases/:caseId/movements/:id` | Get movement |
-
-### Decisions
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/v1/cases/:caseId/decisions` | List decisions |
-| GET | `/v1/decisions/:id` | Get decision |
-
-### Ingest Runs
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/v1/cases/:caseId/ingest-runs` | List ingest runs |
-| GET | `/v1/ingest-runs/:id` | Get run status |
-
-### Internal Endpoints
-
-<Warning>
-**Service-to-service only.** Not publicly exposed.
-</Warning>
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/internal/v1/companies/:companyId/cases` | List cases (internal) |
-| POST | `/internal/v1/companies/:companyId/cases` | Create case (ingestion) |
-| PATCH | `/internal/v1/companies/:companyId/cases/:id` | Update case (ingestion) |
-
-## RRS Flow Example
-
-### Route (Validation only)
-
-```typescript
-// routes/cases.ts
-app.patch(
-  "/:id",
-  zValidator("json", UpdateCaseSchema),
-  async (c) => {
-    const id = c.req.param("id");
-    const data = c.req.valid("json");
-    const tenantDb = c.get("tenantDb");
-
-    // Delegate EVERYTHING to service
-    const result = await caseService.updateCase(tenantDb, id, data);
-
-    return c.json(result);
-  }
-);
-```
-
-### Service (Business logic)
-
-```typescript
-// services/case.service.ts
-async updateCase(
-  tenantDb: PrismaClient,
-  id: string,
-  data: UpdateCaseInput
-): Promise<Case> {
-  const existing = await this.caseRepo.findById(tenantDb, id);
-
-  if (!existing) {
-    throw new NotFoundError("Case not found");
-  }
-
-  // Trusted Source logic
-  const updateData: Partial<CaseUpdateData> = {};
-
-  if (data.subjectMatter !== undefined) {
-    const current = existing.subjectMatter as SourcedValue;
-    
-    // Only update if manual correction
-    updateData.subjectMatter = {
-      ...current,
-      manual: data.subjectMatter,
-      updatedAt: {
-        ...current.updatedAt,
-        manual: new Date().toISOString(),
-      },
-    };
-  }
-
-  return this.caseRepo.update(tenantDb, id, updateData);
-}
-```
-
-### Repository (Prisma only)
-
-```typescript
-// repositories/case.repository.ts
-async update(
-  db: PrismaClient,
-  id: string,
-  data: Partial<CaseUpdateData>
-): Promise<Case> {
-  return db.case.update({
-    where: { id },
-    data,
-  });
-}
-```
+<Info>
+For the complete interactive API documentation, see the [Cases API Reference](/api-reference/cases).
+</Info>
 
 ## Configuration
 
@@ -300,14 +118,38 @@ S3_BUCKET=clamo-attachments
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
-## SDK
+## SDKs
 
-This service publishes a TypeScript SDK:
+This service publishes typed SDKs generated from the OpenAPI specification using [Stainless](https://stainless.com) (TypeScript/Python) and OpenAPI Generator (Rust).
 
-```bash
+| SDK | Package | Repository |
+|-----|---------|------------|
+| TypeScript | `@getclamo/cases` | [GetClamo/clamo-cases-sdk-ts](https://github.com/GetClamo/clamo-cases-sdk-ts) |
+| Python | `getclamo-cases` | [GetClamo/clamo-cases-sdk-py](https://github.com/GetClamo/clamo-cases-sdk-py) |
+| Rust | `clamo-cases-sdk` | [GetClamo/clamo-cases-sdk-rust](https://github.com/GetClamo/clamo-cases-sdk-rust) |
+
+### Installation
+
+<CodeGroup>
+```bash TypeScript
 pnpm add @getclamo/cases
+# or
+npm install @getclamo/cases
 ```
 
+```bash Python
+pip install getclamo-cases
+```
+
+```bash Rust
+cargo add clamo-cases-sdk
+```
+</CodeGroup>
+
+### Usage
+
+<Tabs>
+<Tab title="TypeScript">
 ```typescript
 import Cases from "@getclamo/cases";
 
@@ -328,6 +170,42 @@ const internalCases = await cases.internal
   .companies(companyId)
   .cases.list();
 ```
+</Tab>
+<Tab title="Python">
+```python
+from getclamo_cases import Cases
+
+cases = Cases(base_url=os.environ["CASES_SERVICE_URL"])
+
+# List cases
+result = cases.list(status="EN_TRAMITE", page=1, limit=20)
+
+# Get case
+case_detail = cases.get("case_abc123")
+
+# Internal endpoints (service-to-service)
+internal_cases = cases.internal.companies(company_id).cases.list()
+```
+</Tab>
+<Tab title="Rust">
+```rust
+use clamo_cases_sdk::Client;
+
+let cases = Client::new(std::env::var("CASES_SERVICE_URL")?);
+
+// List cases
+let result = cases.list()
+    .status("EN_TRAMITE")
+    .page(1)
+    .limit(20)
+    .send()
+    .await?;
+
+// Get case
+let case_detail = cases.get("case_abc123").send().await?;
+```
+</Tab>
+</Tabs>
 
 ## Local Development
 
@@ -349,17 +227,17 @@ pnpm test
 
 <CardGroup cols={2}>
   <Card
-    title="RRS Pattern"
-    icon="layer-group"
-    href="/en/architecture/rrs-pattern"
+    title="Case Entity"
+    icon="database"
+    href="/en/entities/case"
   >
-    Detailed pattern documentation.
+    Case entity with SourcedValue fields.
   </Card>
   <Card
-    title="Data Model"
-    icon="database"
-    href="/en/architecture/data-model"
+    title="Best Practices"
+    icon="lightbulb"
+    href="/en/guides/best-practices"
   >
-    Complete SourcedValue pattern.
+    Developer best practices guide.
   </Card>
 </CardGroup>

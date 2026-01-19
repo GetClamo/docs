@@ -1,0 +1,241 @@
+---
+title: Sync OpenAPI & Stainless
+description: Sincronizar rutas API con especificaciones OpenAPI y configuración de Stainless SDK
+---
+
+Esta guía ayuda a sincronizar rutas API con especificaciones OpenAPI y configuración de Stainless SDK. Este flujo asegura que las rutas nuevas o modificadas en un servicio basado en Hono se reflejen correctamente en `stainless.yaml` y las especificaciones OpenAPI regeneradas.
+
+## Servicios
+
+| Servicio | Ruta |
+|----------|------|
+| clamo-cases | `/clamo-cases` |
+| clamo-tenant | `/clamo-tenant` |
+
+## Pasos del Flujo
+
+### Paso 1: Inspeccionar Estado Actual
+
+Antes de hacer cambios:
+
+```bash
+# Verificar estado git y commits recientes
+cd {service_path}
+git status
+git log --oneline -10
+
+# Listar archivos de rutas
+ls -la src/routes/
+
+# Verificar app.ts para rutas montadas
+cat src/app.ts
+
+# Leer stainless.yaml actual
+cat stainless.yaml
+```
+
+### Paso 2: Identificar Cambios en Rutas
+
+Para cada archivo de ruta en `src/routes/*.ts`:
+
+1. Verificar si las rutas están **montadas** en `app.ts`
+2. Verificar si las rutas están **definidas** en `stainless.yaml`
+3. Notar cualquier **ruta nueva** o **ruta faltante**
+
+| Patrón de Ruta | Ubicación en Stainless |
+|----------------|------------------------|
+| `/v1/companies/{companyId}/cases` | `resources.companies.subresources.cases` |
+| `/v1/companies/{companyId}/cases/{caseId}/movements` | `...cases.subresources.movements` |
+| `/v1/stages` | `resources.stages` |
+
+### Paso 3: Actualizar stainless.yaml
+
+Para cada nuevo recurso o método:
+
+```yaml
+resources:
+  {parent_resource}:
+    subresources:
+      {new_resource}:
+        models:
+          {model_name}: {ModelSchema}
+        methods:
+          list:
+            endpoint: get /v1/path/{param}
+            paginated: false
+          create: post /v1/path/{param}
+          retrieve: get /v1/path/{param}/{id}
+          update: patch /v1/path/{param}/{id}
+          delete: delete /v1/path/{param}/{id}
+          {custom_action}: post /v1/path/{param}/{id}/{action}
+```
+
+<Note>
+**Convenciones:**
+- Nombres de recursos usan `snake_case`
+- Nombres de modelos usan `PascalCase`
+- Nombres de métodos siguen convenciones REST (`list`, `create`, `retrieve`, `update`, `delete`)
+- Métodos personalizados usan frases verbales (`mark_complete`, `fail`, `sync_status`)
+- Parámetros de ruta usan `{camelCase}`
+</Note>
+
+### Paso 4: Regenerar OpenAPI
+
+```bash
+cd {service_path}
+pnpm openapi:generate
+```
+
+Esto ejecuta la app Hono y extrae la especificación OpenAPI a `openapi.json` y `openapi.yaml`.
+
+### Paso 5: Build y Verificar
+
+```bash
+cd {service_path}
+pnpm build
+```
+
+Corregir cualquier error de TypeScript o lint antes de continuar.
+
+| Error | Solución |
+|-------|----------|
+| `Module has no exported member 'X'` | Actualizar `@getclamo/database` o verificar exports |
+| `'X' cannot be used as a value` | Cambiar `import type { X }` a `import { X, type Y }` |
+| `Type 'null' not assignable to JsonValue` | Usar `TenantPrisma.DbNull` en vez de `null` |
+| ESLint `no-explicit-any` warning | Reemplazar `any` con tipos Prisma apropiados |
+
+### Paso 6: Commit y Push
+
+```bash
+cd {service_path}
+git add .
+git commit -m "feat: {descripción}
+
+- Add/update {resource} endpoints
+- Update stainless.yaml with {resource} resource
+- Regenerate OpenAPI spec"
+git push
+```
+
+## Referencia stainless.yaml
+
+```yaml
+edition: 2025-10-10
+
+organization:
+  name: clamo
+  docs: https://docs.clamo.ai
+  contact: support@clamo.ai
+
+targets:
+  typescript:
+    package_name: "@getclamo/{service}"
+    production_repo: GetClamo/clamo-{service}-sdk-ts
+  python:
+    package_name: getclamo_{service}
+    production_repo: GetClamo/clamo-{service}-sdk-py
+
+environments:
+  production: https://api.prd.clamo.services
+  staging: https://api.stg.clamo.services
+  local: http://localhost:{port}
+
+resources:
+  stages:
+    models:
+      stage: Stage
+    methods:
+      list:
+        endpoint: get /v1/stages
+        paginated: false
+
+  companies:
+    subresources:
+      cases:
+        models:
+          case: Case
+        methods:
+          list:
+            endpoint: get /v1/companies/{companyId}/cases
+            paginated: cases_page
+          create: post /v1/companies/{companyId}/cases
+
+pagination:
+  - name: cases_page
+    type: cursor
+    request:
+      pageSize:
+        type: integer
+      pageToken:
+        type: string
+    response:
+      cases:
+        type: array
+        x-stainless-pagination-property:
+          purpose: items
+      page:
+        type: object
+        properties:
+          nextPageToken:
+            type: string
+            x-stainless-pagination-property:
+              purpose: next_cursor_field
+
+settings:
+  disable_mock_tests: true
+  license: Apache-2.0
+
+client_settings:
+  opts:
+    api_key:
+      type: string
+      read_env: CLAMO_API_KEY
+      nullable: true
+```
+
+## Solución de Problemas
+
+<AccordionGroup>
+  <Accordion title="Build falla con errores de tipos de base de datos">
+    Si agregaste nuevos modelos de base de datos, asegúrate de:
+    1. La migración existe en `clamo-database/prisma/tenant/migrations/`
+    2. Los tipos están exportados en `clamo-database/src/index.ts`
+    3. El paquete de base de datos fue reconstruido y la versión incrementada
+    4. El servicio tiene el paquete de base de datos más reciente (`pnpm update @getclamo/database`)
+  </Accordion>
+
+  <Accordion title="Generación de SDK falla en CI">
+    Verificar que:
+    1. `stainless.yaml` es YAML válido
+    2. Todos los modelos referenciados existen en la especificación OpenAPI
+    3. Las rutas de endpoints coinciden con las rutas reales
+  </Accordion>
+
+  <Accordion title="Las rutas existen pero no están en OpenAPI">
+    Asegúrate que las rutas usen `@hono/zod-openapi`:
+    ```typescript
+    import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+
+    const myRoute = createRoute({
+      method: "get",
+      path: "/",
+      tags: ["MyTag"],
+      request: { params: ParamSchema },
+      responses: {
+        200: { content: { "application/json": { schema: ResponseSchema } } },
+      },
+    });
+
+    app.openapi(myRoute, async (c) => {
+      // handler
+    });
+    ```
+    Las rutas que usan `app.get()` simple no aparecerán en OpenAPI.
+  </Accordion>
+
+  <Accordion title="Stainless SDK no incluye nuevos tipos">
+    1. Asegúrate que los modelos estén listados en `stainless.yaml` bajo la sección `models:` del recurso
+    2. Verifica que la especificación OpenAPI incluya la definición del schema
+    3. Haz push para disparar la regeneración de SDKs en CI
+  </Accordion>
+</AccordionGroup>

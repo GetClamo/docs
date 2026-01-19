@@ -3,9 +3,7 @@ title: clamo-mailing
 description: Transactional email service with React Email and SendGrid
 ---
 
-# clamo-mailing
-
-Service for sending transactional emails and notifications using **React Email** for templates and **SendGrid** for delivery.
+Service for sending transactional emails and notifications using React Email for templates and SendGrid for delivery.
 
 ## General Information
 
@@ -23,31 +21,21 @@ Service for sending transactional emails and notifications using **React Email**
 ```mermaid
 flowchart LR
     subgraph Triggers [Triggers]
-        Tenant[clamo-tenant<br/>Invitations]
-        Cases[clamo-cases<br/>Alerts]
-        Scheduler[Scheduler<br/>Reports]
+        Tenant[clamo-tenant]
+        Cases[clamo-cases]
+        Scheduler[Scheduler]
     end
-    
+
     subgraph Mailing [clamo-mailing]
-        Routes[Hono Routes]
-        Templates[React Email<br/>Templates]
-        Renderer[Email Renderer]
+        Templates[React Email Templates]
         Sender[SendGrid Client]
     end
-    
-    subgraph Delivery [Delivery]
-        SendGrid[SendGrid API]
-        Users[Users]
-    end
-    
-    Tenant --> Routes
-    Cases --> Routes
-    Scheduler --> Routes
-    Routes --> Templates
-    Templates --> Renderer
-    Renderer --> Sender
-    Sender --> SendGrid
-    SendGrid --> Users
+
+    Tenant --> Templates
+    Cases --> Templates
+    Scheduler --> Templates
+    Templates --> Sender
+    Sender --> Users[Users]
 ```
 
 ## Available Templates
@@ -58,123 +46,6 @@ flowchart LR
 | `NewMovementEmail` | clamo-cases | New movement in case |
 | `RiskAlertEmail` | clamo-cases | Risk level change alert |
 | `WeeklyReportEmail` | Scheduler | Weekly summary |
-
-## Directory Structure
-
-```
-clamo-mailing/src/
-├── emails/
-│   ├── components/
-│   │   ├── Header.tsx
-│   │   ├── Footer.tsx
-│   │   └── Button.tsx
-│   ├── InvitationEmail.tsx
-│   ├── NewMovementEmail.tsx
-│   ├── RiskAlertEmail.tsx
-│   └── WeeklyReportEmail.tsx
-├── routes/
-│   ├── send.ts
-│   └── preview.ts
-├── lib/
-│   └── sendgrid.ts
-└── index.ts
-```
-
-## Example: InvitationEmail
-
-```tsx
-// src/emails/InvitationEmail.tsx
-import {
-  Body,
-  Button,
-  Container,
-  Head,
-  Heading,
-  Html,
-  Preview,
-  Text,
-} from '@react-email/components';
-
-interface InvitationEmailProps {
-  inviterName: string;
-  companyName: string;
-  inviteUrl: string;
-  role: 'admin' | 'member';
-}
-
-export function InvitationEmail({
-  inviterName,
-  companyName,
-  inviteUrl,
-  role,
-}: InvitationEmailProps) {
-  return (
-    <Html>
-      <Head />
-      <Preview>
-        {inviterName} has invited you to join {companyName} on Clamo
-      </Preview>
-      <Body style={main}>
-        <Container style={container}>
-          <Heading style={heading}>
-            You've been invited to {companyName}
-          </Heading>
-          
-          <Text style={text}>
-            {inviterName} has invited you to join {companyName} on Clamo
-            as {role === 'admin' ? 'Administrator' : 'Member'}.
-          </Text>
-          
-          <Button style={button} href={inviteUrl}>
-            Accept Invitation
-          </Button>
-        </Container>
-      </Body>
-    </Html>
-  );
-}
-```
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/send/invitation` | Send invitation |
-| POST | `/send/movement` | Notify movement |
-| POST | `/send/risk-alert` | Risk alert |
-| POST | `/send/weekly-report` | Weekly report |
-| GET | `/preview/:template` | Template preview |
-
-## SendGrid Integration
-
-```typescript
-// src/lib/sendgrid.ts
-import sgMail from '@sendgrid/mail';
-
-sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
-
-interface SendEmailOptions {
-  to: string;
-  subject: string;
-  html: string;
-}
-
-export async function sendEmail(options: SendEmailOptions) {
-  await sgMail.send({
-    to: options.to,
-    from: {
-      email: 'noreply@clamo.dev',
-      name: 'Clamo',
-    },
-    subject: options.subject,
-    html: options.html,
-    trackingSettings: {
-      clickTracking: { enable: true },
-      openTracking: { enable: true },
-    },
-  });
-}
-```
 
 ## Configuration
 
@@ -203,7 +74,6 @@ pnpm dev
 
 # Email preview (React Email)
 pnpm email:preview
-# Opens http://localhost:3000
 
 # Build
 pnpm build

@@ -215,33 +215,6 @@ LANGCHAIN_API_KEY=ls__...
 
 ---
 
-### clamo-ingest-go
-
-```bash
-# Kafka
-KAFKA_BROKERS=localhost:9092
-KAFKA_CONSUMER_GROUP=clamo-ingest
-KAFKA_TOPIC=cases-ingest
-
-# S3/MinIO
-S3_ENDPOINT=http://localhost:9000
-S3_ACCESS_KEY=...
-S3_SECRET_KEY=...
-S3_BUCKET=clamo-envelopes
-
-# Tenant Service
-TENANT_SERVICE_URL=http://localhost:4001
-
-# Redis (Taxonomy cache)
-REDIS_URL=redis://localhost:6379
-
-# Performance
-DB_MAX_CONNECTIONS=20
-BATCH_SIZE=100
-```
-
----
-
 ### clamo-database (Scripts)
 
 ```bash

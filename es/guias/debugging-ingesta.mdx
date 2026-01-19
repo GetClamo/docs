@@ -14,29 +14,24 @@ flowchart LR
     subgraph Extraction [Extracción]
         CEJ[clamo-cej-connector<br/>Scraping + LLM]
     end
-    
+
     subgraph Events [Eventos]
         K1[Kafka: cej-events]
-        K2[Kafka: cases-ingest]
     end
-    
+
     subgraph Ingestion [Ingesta]
         API[clamo-cases<br/>Event Router]
-        Ingest[clamo-ingest-go<br/>Batch Insert]
     end
-    
+
     subgraph Storage [Almacenamiento]
         S3[(S3/MinIO<br/>Envelopes)]
         DB[(Tenant DB)]
     end
-    
+
     CEJ -->|CASE_READY| K1
     CEJ -->|Envelope| S3
     K1 --> API
-    API -->|Validate + Audit| K2
-    K2 --> Ingest
-    Ingest -->|Fetch| S3
-    Ingest -->|COPY| DB
+    API -->|COPY| DB
 ```
 
 ## ¿Qué es un CaseIngestRun?
@@ -278,7 +273,7 @@ Es importante distinguir entre diferentes tipos de fallos para aplicar la soluci
 |---------------|--------|----------|--------|
 | **Fallo de Scraping** | clamo-cej-connector | `CAPTCHA_FAILED`, `SESSION_EXPIRED`, `CEJ_UNAVAILABLE` | Verificar Steel.dev, reintentar más tarde |
 | **Fallo de LLM** | clamo-cej-connector | `LLM_TIMEOUT`, `LLM_RATE_LIMIT`, `LLM_INVALID_RESPONSE` | Verificar API key, revisar prompts |
-| **Fallo de Ingesta** | clamo-ingest-go | `DB_CONNECTION_ERROR`, `BATCH_INSERT_FAILED`, `ENVELOPE_NOT_FOUND` | Verificar Neon, revisar logs de ingest-go |
+| **Fallo de Ingesta** | clamo-cases | `DB_CONNECTION_ERROR`, `BATCH_INSERT_FAILED`, `ENVELOPE_NOT_FOUND` | Verificar Neon, revisar logs de clamo-cases |
 | **Fallo de Kafka** | Mensajería | Consumer lag alto, mensajes no procesados | Verificar brokers, consumer groups |
 
 ```bash
@@ -503,25 +498,11 @@ Configura alertas para:
 
 <CardGroup cols={2}>
   <Card
-    title="Pipeline de Datos"
-    icon="diagram-project"
-    href="/es/arquitectura/pipeline-datos"
-  >
-    Arquitectura completa del pipeline.
-  </Card>
-  <Card
     title="clamo-cej-connector"
     icon="spider"
     href="/es/servicios/clamo-cej-connector"
   >
     Servicio de scraping del CEJ.
-  </Card>
-  <Card
-    title="clamo-ingest-go"
-    icon="database"
-    href="/es/servicios/clamo-ingest-go"
-  >
-    Servicio de ingesta batch.
   </Card>
   <Card
     title="Depuración General"

@@ -1,277 +1,220 @@
 ---
 title: Quickstart
-description: Integrate Clamo into your application in less than 5 minutes
+description: Set up your Clamo development environment with the clamo CLI
 ---
 
-# Quickstart
-
-This guide will help you make your first integration with Clamo APIs.
+The `clamo` CLI orchestrates your local development environment. It manages services, databases, and dependencies.
 
 ## Prerequisites
 
-Before starting, you need:
+| Software | Version | Purpose |
+|----------|---------|---------|
+| Node.js | 20+ | Frontend and TypeScript services |
+| pnpm | 10+ | Package manager |
+| Python | 3.10+ | CLI and Python services |
+| uv | Latest | Python package manager |
+| Docker | Latest | CEJ extractor and discovery workers |
 
-- Clamo access credentials (provided by your administrator)
-- A valid WorkOS session token
-- Node.js 20+ or Python 3.10+ (depending on your stack)
-
-## Step 1: Obtain Authentication Token
-
-Clamo uses WorkOS AuthKit for authentication. The session token is obtained after login:
+### Install uv
 
 <CodeGroup>
-
-```javascript JavaScript
-import { getSession } from '@workos-inc/authkit-nextjs';
-
-const session = await getSession();
-const token = session?.accessToken;
+```bash Linux/macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-```python Python
-# The token is obtained from the WorkOS authentication flow
-# and passed in the x-clamo-session header
-import base64
-import json
-
-session_data = {
-    "userId": "user_123",
-    "organizationId": "org_456",
-    "email": "user@company.com"
-}
-token = base64.urlsafe_b64encode(json.dumps(session_data).encode()).decode()
+```powershell Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+```bash Homebrew
+brew install uv
+```
 </CodeGroup>
 
-## Step 2: Configure Headers
-
-All requests to Clamo require the following headers:
+Restart your terminal, then verify:
 
 ```bash
-Authorization: Bearer <workos_access_token>
-x-clamo-session: <base64_encoded_session>
-Content-Type: application/json
+uv --version
 ```
 
-## Step 3: Get User Information
+## Installation
 
-<CodeGroup>
+<Steps>
+  <Step title="Clone the monorepo">
+    ```bash
+    git clone git@github.com:GetClamo/clamo.git
+    cd clamo
+    ```
+  </Step>
 
-```javascript JavaScript
-const response = await fetch('https://api.clamo.dev/v1/me', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'x-clamo-session': sessionToken,
-  },
-});
+  <Step title="Install the CLI">
+    ```bash
+    cd clamo-setup
+    uv tool install . --force
+    ```
 
-const user = await response.json();
-console.log(user);
-// {
-//   id: "usr_abc123",
-//   email: "user@company.com",
-//   firstName: "John",
-//   lastName: "Doe",
-//   role: "admin",
-//   companyId: "cmp_xyz789"
-// }
+    Restart your terminal, then verify:
+    ```bash
+    clamo --help
+    ```
+  </Step>
+
+  <Step title="Run setup wizard">
+    From the clamo root directory:
+    ```bash
+    cd /path/to/clamo
+    clamo dev setup
+    ```
+
+    The wizard will ask you to select which services to run.
+  </Step>
+
+  <Step title="Start services">
+    ```bash
+    clamo dev start
+    ```
+  </Step>
+</Steps>
+
+<Note>
+Always run `clamo` commands from the clamo root directory (where `clamo-web-app`, `clamo-cases`, etc. are located).
+</Note>
+
+## Available Services
+
+| Service | Description | Port | Type |
+|---------|-------------|------|------|
+| `clamo-web` | Next.js frontend | 3000 | Local |
+| `clamo-cases` | Cases API | 4000 | Local |
+| `clamo-tenant` | Tenant API | 4001 | Local |
+| `clamo-dashboards` | Dashboards API (Rust) | 8020 | Local |
+| `clamo-widget-server` | Widget Server | 3005 | Local |
+| `luna` | AI Assistant (LangGraph) | 8000 | Local |
+| `clamo-tools` | AI Tools REST API | 8080 | Local |
+| `clamo-cej-extractor` | CEJ Extractor + Inngest | 8003 | Docker |
+| `clamo-cej-discovery` | Discovery workers | - | Docker |
+
+## Commands
+
+### Development
+
+| Command | Description |
+|---------|-------------|
+| `clamo dev setup` | Interactive environment setup |
+| `clamo dev start` | Start all configured services |
+| `clamo dev start --rebuild` | Start and rebuild Docker containers |
+| `clamo dev stop` | Stop Docker services |
+| `clamo dev restart` | Restart all services |
+| `clamo dev restart --rebuild` | Restart and rebuild containers |
+
+### Database
+
+| Command | Description |
+|---------|-------------|
+| `clamo db migrate stg` | Run migrations on staging |
+| `clamo db migrate prd` | Run migrations on production |
+| `clamo db status stg` | Check migration status |
+| `clamo db studio stg` | Open Prisma Studio |
+
+### CLI Management
+
+| Command | Description |
+|---------|-------------|
+| `clamo update` | Update CLI from source |
+| `clamo uninstall` | Uninstall CLI |
+
+## Daily Workflow
+
+```bash
+# Initial setup (once)
+clamo dev setup
+
+# Start services
+clamo dev start
+
+# ... work on your code ...
+# Ctrl+C to stop
+
+# Restart if needed
+clamo dev restart
+
+# Rebuild containers if dependencies changed
+clamo dev restart --rebuild
 ```
 
-```python Python
-import httpx
+## Hot Reload
 
-response = httpx.get(
-    "https://api.clamo.dev/v1/me",
-    headers={
-        "Authorization": f"Bearer {access_token}",
-        "x-clamo-session": session_token,
-    }
-)
+All services have hot reload enabled:
 
-user = response.json()
-print(user)
+| Service | Hot Reload |
+|---------|------------|
+| clamo-web (Next.js) | Automatic |
+| clamo-cases | Via `pnpm dev` |
+| clamo-tenant | Via `pnpm dev` |
+| luna (LangGraph) | Via `langgraph dev` |
+| clamo-tools | Via `uvicorn --reload` |
+
+## When to Rebuild Containers
+
+**Rebuild needed:**
+- Dependencies changed (`pyproject.toml`, `uv.lock`)
+- Dockerfile changed
+- Base image updated
+
+```bash
+clamo dev restart --rebuild
 ```
 
-```bash cURL
-curl -X GET https://api.clamo.dev/v1/me \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "x-clamo-session: $SESSION_TOKEN"
-```
+**No rebuild needed:**
+- Python code changes (hot reload)
+- `.env` changes
+- Runtime configuration changes
 
-</CodeGroup>
+## Configuration
 
-## Step 4: List Cases
+Configuration is saved in `clamo.dev.config.json` in the root directory. Run `clamo dev setup` anytime to change your configuration.
 
-Once authenticated, you can get your company's cases:
+## Troubleshooting
 
-<CodeGroup>
+<AccordionGroup>
+  <Accordion title="clamo: command not found">
+    Restart your terminal after installing the CLI. If using development installation, activate the virtualenv:
+    ```bash
+    cd clamo-setup
+    source .venv/bin/activate
+    ```
+  </Accordion>
 
-```javascript JavaScript
-const response = await fetch('https://api.clamo.dev/v1/cases', {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'x-clamo-session': sessionToken,
-  },
-});
+  <Accordion title="Docker containers won't start">
+    Verify Docker is running:
+    ```bash
+    docker ps
+    ```
+    If there are orphan containers:
+    ```bash
+    clamo dev stop
+    docker system prune
+    clamo dev start --rebuild
+    ```
+  </Accordion>
 
-const { data: cases, pagination } = await response.json();
-
-cases.forEach(caso => {
-  console.log(`${caso.expediente} - ${caso.demandante} vs ${caso.demandado}`);
-  console.log(`  Status: ${caso.status}`);
-  console.log(`  Risk: ${caso.riskLevel}`);
-});
-```
-
-```python Python
-response = httpx.get(
-    "https://api.clamo.dev/v1/cases",
-    headers={
-        "Authorization": f"Bearer {access_token}",
-        "x-clamo-session": session_token,
-    }
-)
-
-data = response.json()
-for caso in data["data"]:
-    print(f"{caso['expediente']} - {caso['demandante']} vs {caso['demandado']}")
-```
-
-```bash cURL
-curl -X GET "https://api.clamo.dev/v1/cases" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "x-clamo-session: $SESSION_TOKEN"
-```
-
-</CodeGroup>
-
-## Step 5: Get Case Details
-
-<CodeGroup>
-
-```javascript JavaScript
-const caseId = 'case_abc123';
-
-const response = await fetch(`https://api.clamo.dev/v1/cases/${caseId}`, {
-  headers: {
-    'Authorization': `Bearer ${accessToken}`,
-    'x-clamo-session': sessionToken,
-  },
-});
-
-const caso = await response.json();
-
-console.log('Case Number:', caso.expediente);
-console.log('Movements:', caso.movements.length);
-console.log('Last movement:', caso.movements[0]?.description);
-```
-
-```python Python
-case_id = "case_abc123"
-
-response = httpx.get(
-    f"https://api.clamo.dev/v1/cases/{case_id}",
-    headers={
-        "Authorization": f"Bearer {access_token}",
-        "x-clamo-session": session_token,
-    }
-)
-
-caso = response.json()
-print(f"Case Number: {caso['expediente']}")
-print(f"Movements: {len(caso['movements'])}")
-```
-
-</CodeGroup>
-
-## Complete Example
-
-Here's a complete integration example:
-
-```javascript
-// clamo-client.js
-class ClamoClient {
-  constructor(accessToken, sessionToken) {
-    this.baseUrl = 'https://api.clamo.dev';
-    this.headers = {
-      'Authorization': `Bearer ${accessToken}`,
-      'x-clamo-session': sessionToken,
-      'Content-Type': 'application/json',
-    };
-  }
-
-  async getMe() {
-    const response = await fetch(`${this.baseUrl}/v1/me`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-
-  async getCompany() {
-    const response = await fetch(`${this.baseUrl}/v1/me/company`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-
-  async listCases(params = {}) {
-    const query = new URLSearchParams(params).toString();
-    const response = await fetch(`${this.baseUrl}/v1/cases?${query}`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-
-  async getCase(caseId) {
-    const response = await fetch(`${this.baseUrl}/v1/cases/${caseId}`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-
-  async getCaseMovements(caseId) {
-    const response = await fetch(`${this.baseUrl}/v1/cases/${caseId}/movements`, {
-      headers: this.headers,
-    });
-    return response.json();
-  }
-}
-
-// Usage
-const client = new ClamoClient(accessToken, sessionToken);
-const user = await client.getMe();
-const cases = await client.listCases({ status: 'EN_TRAMITE' });
-```
-
-## Main Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/v1/me` | Current user information |
-| GET | `/v1/me/company` | Company information |
-| GET | `/v1/cases` | List cases |
-| GET | `/v1/cases/:id` | Case details |
-| GET | `/v1/cases/:id/movements` | Case movements |
-| GET | `/v1/cases/:id/milestones` | Procedural milestones |
-| GET | `/v1/cases/:id/progress` | Progress by stages |
+  <Accordion title="Port already in use">
+    Check which process is using the port:
+    ```bash
+    lsof -i :3000  # web
+    lsof -i :4000  # cases
+    lsof -i :4001  # tenant
+    ```
+  </Accordion>
+</AccordionGroup>
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card
-    title="Authentication"
-    icon="key"
-    href="/en/guides/authentication"
-  >
-    Learn more about the WorkOS authentication flow.
+  <Card title="Architecture" icon="sitemap" href="/en/getting-started/architecture">
+    Understand how services connect.
   </Card>
-  <Card
-    title="API Reference"
-    icon="code"
-    href="/en/api-reference/introduction"
-  >
-    Complete documentation of all endpoints.
+  <Card title="Services" icon="server" href="/en/services/clamo-cases">
+    Explore the microservices.
   </Card>
 </CardGroup>
-

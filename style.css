@@ -1,0 +1,12 @@
+/* Override logo size */
+[class*="logo"] img,
+[class*="Logo"] img,
+nav img,
+aside img,
+header img,
+a[href="/"] img {
+  max-height: none !important;
+  max-width: none !important;
+  height: 50px !important;
+  width: auto !important;
+}

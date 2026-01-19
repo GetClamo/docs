@@ -1,0 +1,171 @@
+---
+title: "Enums"
+description: "Referencia completa para todos los tipos de enumeracion en las bases de datos del Plano de Control y Tenant"
+---
+
+Esta pagina documenta todos los tipos de enumeracion usados en los schemas de base de datos de Clamo. Los enums se dividen entre las bases de datos del **Plano de Control** (Supabase) y **Tenant** (Neon).
+
+## Enums del Plano de Control
+
+### DatabaseStatus
+
+Rastrea el estado de aprovisionamiento de la rama de base de datos Neon de una empresa.
+
+| Valor | Descripcion |
+|-------|-------------|
+| `PENDING` | Empresa creada, base de datos aun no aprovisionada |
+| `PROVISIONING` | API de Neon llamada, esperando completitud |
+| `READY` | Base de datos disponible para conexiones tenant |
+| `ERROR` | Aprovisionamiento fallo, requiere intervencion |
+
+### OnboardingState
+
+Rastrea progreso del usuario a traves del flujo de onboarding.
+
+| Valor | Descripcion |
+|-------|-------------|
+| `PENDING_ORG` | Usuario autenticado pero no asociado con empresa |
+| `PENDING_PROFILE` | Usuario tiene empresa pero perfil incompleto |
+| `COMPLETE` | Acceso completo otorgado |
+
+## Enums de Tenant
+
+### PartyType
+
+Clasifica el tipo de entidad legal de una parte del caso.
+
+| Valor | Descripcion | Ejemplo |
+|-------|-------------|---------|
+| `NATURAL` | Persona individual | "Juan Perez Garcia" |
+| `JURIDICA` | Corporacion u organizacion | "Empresa ABC S.A.C." |
+| `UNKNOWN` | Sin clasificar (necesita revision) | Datos CEJ no procesados |
+
+### PartyRole
+
+Define el rol de una parte en procedimientos legales.
+
+| Valor | Espanol | Descripcion |
+|-------|---------|-------------|
+| `PLAINTIFF` | Demandante | Parte que presenta la demanda |
+| `DEFENDANT` | Demandado | Parte que se defiende contra pretensiones |
+| `THIRD_PARTY` | Tercero | Parte interviniente o unida |
+| `OTHER` | Otro | Testigos, peritos, etc. |
+
+### ClaimType
+
+Categoriza el tipo de pretension legal.
+
+| Valor | Descripcion | Campos Clave |
+|-------|-------------|--------------|
+| `REINSTATEMENT` | Empleado busca restitucion de trabajo | `position` |
+| `ACTION_NULLITY` | Busca nulificar una accion | `actionDescription` |
+| `COMPENSATION` | Danos monetarios | `amount`, `currency` |
+| `OTHER` | Pretensiones miscelaneas | `description` |
+
+### ClaimSource
+
+Identifica el origen de datos de pretension.
+
+| Valor | Descripcion | Confiabilidad |
+|-------|-------------|---------------|
+| `CEJ` | Registros oficiales del tribunal | Autoritativo pero puede ser incompleto |
+| `AI` | Extraido por IA de documentos | Alta precision, necesita verificacion |
+| `MANUAL` | Datos ingresados por usuario | Verificado por usuario |
+
+### AttachmentState
+
+Rastrea el estado de descarga de anexos de movimiento.
+
+| Valor | Descripcion |
+|-------|-------------|
+| `PENDING` | En cola para descarga |
+| `DOWNLOADED` | Contenido almacenado, listo para extraccion de IA |
+| `FAILED` | Ocurrio error de descarga |
+| `NOT_AVAILABLE` | Documento fuente faltante |
+
+### DecisionScope
+
+Identifica el nivel de instancia judicial de una decision.
+
+| Valor | Espanol | Nivel de Tribunal |
+|-------|---------|-------------------|
+| `FIRST_INSTANCE` | Primera Instancia | Juzgado |
+| `SECOND_INSTANCE` | Segunda Instancia | Sala Superior |
+| `CASSATION` | Casacion | Corte Suprema |
+
+### InstanceResult
+
+Captura la determinacion legal de una decision judicial.
+
+| Resultado | Descripcion |
+|-----------|-------------|
+| `FUNDADA` | Pretension acogida (demandante gana) |
+| `INFUNDADA` | Pretension rechazada en el fondo |
+| `IMPROCEDENTE` | Procesalmente inadmisible |
+| `CONFIRMA` | Decision inferior confirmada |
+| `REVOCA` | Decision inferior revocada |
+| `ANULA` | Decision inferior anulada |
+| `FUNDADO` | Apelacion/mocion acogida |
+| `INFUNDADO` | Apelacion/mocion rechazada |
+| `INADMISIBLE` | Procesalmente rechazada |
+| `OTRO` | Otra determinacion |
+
+### DefendantOutcome
+
+Resultado binario simplificado desde la perspectiva del demandado.
+
+| Valor | Descripcion |
+|-------|-------------|
+| `FAVORABLE` | Demandado gana (INFUNDADA, IMPROCEDENTE) |
+| `DESFAVORABLE` | Demandado pierde (FUNDADA) |
+
+<Note>
+  En casos laborales donde la empresa tipicamente es el demandado, `FAVORABLE` significa que la pretension del empleado fue rechazada, y `DESFAVORABLE` significa que el empleado gano.
+</Note>
+
+### EstadoFinal
+
+Clasificacion de estado final para casos concluidos.
+
+| Valor | Descripcion |
+|-------|-------------|
+| `GIRO` | Pago/ejecucion completada |
+| `ARCHIVO_DEFINITIVO` | Caso cerrado permanentemente |
+| `PENDIENTE` | Esperando resolucion final |
+
+### ArchiveType
+
+Distingue entre archivos temporales y permanentes de casos.
+
+| Valor | Descripcion |
+|-------|-------------|
+| `PROVISIONAL` | Archivado temporalmente, puede reactivarse |
+| `DEFINITIVE` | Cerrado permanentemente |
+
+### CaseIngestRunStatus
+
+Rastrea el progreso de una ejecucion de ingesta de datos.
+
+| Valor | Descripcion |
+|-------|-------------|
+| `RUNNING` | Scraping/parsing en progreso |
+| `FAILED` | Error durante procesamiento |
+| `MOVEMENTS_COMPLETE` | Datos crudos guardados, listo para IA |
+| `ANALYSIS_COMPLETE` | Procesamiento completo terminado |
+
+## Paginas Relacionadas
+
+<CardGroup cols={2}>
+  <Card title="Company" icon="building" href="/es/entidades/company">
+    Usa DatabaseStatus
+  </Card>
+  <Card title="User" icon="user" href="/es/entidades/user">
+    Usa OnboardingState
+  </Card>
+  <Card title="Party" icon="users" href="/es/entidades/party">
+    Usa PartyType, PartyRole
+  </Card>
+  <Card title="Decision" icon="gavel" href="/es/entidades/decision">
+    Usa DecisionScope, InstanceResult, DefendantOutcome
+  </Card>
+</CardGroup>
